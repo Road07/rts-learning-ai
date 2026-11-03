@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "OpenBFME team AI faction playbook, schema only",
+  "type": "object",
+  "required": ["schema", "faction", "strengths", "weaknesses", "phase_profile", "power_spikes", "vulnerable_windows", "composition_sets", "counter_table", "anti_x", "harass", "anti_harass", "heroes", "powers", "signature_tactics", "matchup_notes", "role_affinity", "personality_fit"],
+  "properties": {
+    "schema": {"const": 1},
+    "faction": {"enum": ["FactionMen", "FactionElves", "FactionDwarves", "FactionIsengard", "FactionMordor", "FactionWild", "FactionAngmar"]},
+    "strengths": {"type": "array", "items": {"type": "string"}},
+    "weaknesses": {"type": "array", "items": {"type": "string"}},
+    "phase_profile": {"type": "object"},
+    "power_spikes": {"type": "array"},
+    "vulnerable_windows": {"type": "array"},
+    "composition_sets": {"type": "array", "items": {"type": "object", "properties": {"opening": {"type": "string"}, "weights": {"type": "array", "minItems": 4, "maxItems": 4, "items": {"type": "number", "minimum": 0.25, "maximum": 4}}, "units": {"type": "array", "items": {"type": "string"}}}}},
+    "counter_table": {"type": "object"},
+    "anti_x": {"type": "object"},
+    "harass": {"type": "object"},
+    "anti_harass": {"type": "object"},
+    "heroes": {"type": "array", "items": {"type": "string", "not": {"enum": ["MordorSauron", "MordorSauron_RingHero", "ElvenGaladriel", "ElvenGaladriel_RingHero"]}}},
+    "powers": {"type": "array", "items": {"type": "object", "required": ["name", "radius"], "properties": {"name": {"type": "string", "minLength": 1}, "radius": {"type": "number", "exclusiveMinimum": 0}, "enabled": {"type": "boolean"}, "caster_template": {"type": "string"}, "target": {"enum": ["ground_enemy", "enemy", "friendly", "self"]}, "min_targets": {"type": "integer", "minimum": 1}, "friendly_fire": {"type": "boolean"}, "science": {"type": "string"}, "point_cost": {"type": "integer", "minimum": 0}, "combo_group": {"type": "string"}, "after": {"type": "string"}}}},
+    "signature_tactics": {"type": "array", "items": {"type": "string"}},
+    "matchup_notes": {"type": "object"},
+    "role_affinity": {"type": "object"},
+    "personality_fit": {"type": "object"},
+    "openings": {"type": "array", "items": {"enum": ["rush", "fast_expand", "turtle", "tech", "harass"]}},
+    "opening_steps": {"type": "object", "propertyNames": {"enum": ["rush", "fast_expand", "turtle", "tech", "harass"]}, "additionalProperties": {"type": "array", "items": {"type": "object", "required": ["template"], "properties": {"template": {"type": "string", "minLength": 1}, "count": {"type": "integer", "minimum": 1}, "min_money": {"type": "integer", "minimum": 0}, "home_distance": {"type": "number", "exclusiveMinimum": 0}, "wait_complete": {"type": "boolean"}}, "additionalProperties": false}}}
+  },
+  "additionalProperties": false
+}

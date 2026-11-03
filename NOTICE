@@ -1,0 +1,93 @@
+OpenBFME
+========
+
+OpenBFME is licensed under the GNU General Public License version 3 (see LICENSE).
+
+Parts of engine/ are translated from the source code of Command & Conquer Generals
+Zero Hour, (c) 2001-2003 Electronic Arts Inc., released by Electronic Arts under the
+GNU GPL v3 with the additional terms reproduced below. Those parts keep the original
+SAGE class and file names so they can be compared with their source:
+
+  engine/src/Common/GameCommon.h, AsciiString.*, ArchiveFile*.h, ArchiveFileSystem.h
+  engine/src/Common/System/ArchiveFile.cpp, ArchiveFileSystem.cpp
+      <- GeneralsMD/Code/GameEngine/{Include,Source}/Common/...
+  engine/src/GameEngineDevice/Win32Device/Common/Win32BIGFile*, Win32BIGFileSystem*
+      <- GeneralsMD/Code/GameEngineDevice/.../Win32Device/Common/...
+  engine/src/Libraries/WWVegas/WWLib/chunkio.*
+  engine/src/Libraries/WWVegas/WWMath/matrix3d.h
+  engine/src/Libraries/WWVegas/WW3D2/w3d_file.h, htree.*, hlod.*, meshmdl.h,
+      meshmdlio.cpp, assetmgr.*
+      <- GeneralsMD/Code/Libraries/Source/WWVegas/...
+
+BFME-specific behaviour (5 Hz logic, BIG4 archives, archive load order) follows the
+Open-BFME-1 decompilation (https://github.com/Open-BFME/Open-BFME-1); the citing
+comments name the exact files.
+
+This is a modified version of that program. It is not the original program and is
+not affiliated with or endorsed by Electronic Arts. The Battle for Middle-earth and
+Command & Conquer are trademarks of their respective owners. No game assets are
+included; the game reads the files of your own retail install.
+
+Third-party code: engine/thirdparty/godot-cpp (MIT, Godot Engine contributors),
+engine/thirdparty/doctest (MIT, Viktor Kirilov), engine/thirdparty/lua-4.0.1 (Lua 4.0.1,
+Copyright (C) 1994-2000 TeCGraf, PUC-Rio, under Lua's own permissive licence reproduced in
+engine/thirdparty/lua-4.0.1/COPYRIGHT; engine/src/Libraries/Lua is the altered source
+version that reproduces EA's fork, plainly marked, see its README.md).
+
+engine/thirdparty/fast_float: fast_float v8.0.2, Copyright (c) 2021 The fast_float
+authors, used under the MIT license (LICENSE-MIT). The unmodified headers and
+the upstream MIT, Apache-2.0 and Boost license texts are retained; the release
+commit and archive checksum are pinned in README.openbfme.md.
+
+launcher/fonts (lane UI-5, the launcher's look): Cinzel (Copyright 2020 The Cinzel Project
+Authors), Cormorant Garamond (Copyright 2015 the Cormorant Project Authors) and Inter (Copyright
+2020 The Inter Project Authors), unmodified, from the Google Fonts repository, licensed under the
+SIL Open Font License 1.1; the licence texts are launcher/fonts/OFL-*.txt and travel inside the
+launcher.
+
+engine/src/GameClient/VP6Decoder.cpp and VP6Tables.inc (lane CAMP-2, the movies' picture) are a
+C++ port of FFmpeg's On2 VP6 decoder (libavcodec: vp6.c, vp56.c, vp56data.c, vp6data.h, vp3dsp.c,
+vp6dsp.c, vpx_rac.c, h264chroma_template.c, videodsp_template.c, huffman.c, mathtables.c),
+Copyright (C) 2006 Aurelien Jacobs and the FFmpeg developers, licensed under the GNU Lesser
+General Public License version 2.1 or later and used here under the GNU GPL version 3: section 3
+of the LGPL 2.1 lets a copy be put under the ordinary GNU GPL (version 2 or later) instead. The
+FFmpeg copyright and warranty notices are kept at the head of both files. No FFmpeg library is
+linked or shipped.
+
+Electronic Arts ADDITIONAL TERMS per GNU GPL Section 7
+
+No trademark or publicity rights are granted. This license does NOT give you
+any right, title or interest in "Command & Conquer" or any other Electronic Arts
+trademark. You may not distribute any modification of this program using any
+Electronic Arts trademark or claim any affiliation or association with
+Electronic Arts Inc. or its affiliates or their employees.
+
+Any propagation or conveyance of this program must include this copyright
+notice and these terms.
+
+If you convey this program (or any modifications of it) and assume
+contractual liability for the program to recipients of it, you agree to
+indemnify Electronic Arts for any liability that those contractual
+assumptions impose on Electronic Arts.
+
+You may not misrepresent the origins of this program; modified versions of
+the program must be marked as such and not identified as the original program.
+
+This disclaimer supplements the one included in the General Public License.
+TO THE FULLEST EXTENT PERMISSIBLE UNDER APPLICABLE LAW, THIS PROGRAM IS
+PROVIDED TO YOU "AS IS," WITH ALL FAULTS, WITHOUT WARRANTY OF ANY KIND, AND
+YOUR USE IS AT YOUR SOLE RISK. THE ENTIRE RISK OF SATISFACTORY QUALITY AND
+PERFORMANCE RESIDES WITH YOU. ELECTRONIC ARTS DISCLAIMS ANY AND ALL EXPRESS,
+IMPLIED OR STATUTORY WARRANTIES, INCLUDING IMPLIED WARRANTIES OF
+MERCHANTABILITY, SATISFACTORY QUALITY, FITNESS FOR A PARTICULAR PURPOSE,
+NONINFRINGEMENT OF THIRD PARTY RIGHTS, AND WARRANTIES (IF ANY) ARISING FROM A
+COURSE OF DEALING, USAGE, OR TRADE PRACTICE. ELECTRONIC ARTS DOES NOT WARRANT
+AGAINST INTERFERENCE WITH YOUR ENJOYMENT OF THE PROGRAM; THAT THE PROGRAM WILL
+MEET YOUR REQUIREMENTS; THAT OPERATION OF THE PROGRAM WILL BE UNINTERRUPTED OR
+ERROR-FREE, OR THAT THE PROGRAM WILL BE COMPATIBLE WITH THIRD PARTY SOFTWARE
+OR THAT ANY ERRORS IN THE PROGRAM WILL BE CORRECTED. NO ORAL OR WRITTEN ADVICE
+PROVIDED BY ELECTRONIC ARTS OR ANY AUTHORIZED REPRESENTATIVE SHALL CREATE A
+WARRANTY. SOME JURISDICTIONS DO NOT ALLOW THE EXCLUSION OF OR LIMITATIONS ON
+IMPLIED WARRANTIES OR THE LIMITATIONS ON THE APPLICABLE STATUTORY RIGHTS OF A
+CONSUMER, SO SOME OR ALL OF THE ABOVE EXCLUSIONS AND LIMITATIONS MAY NOT APPLY
+TO YOU.

@@ -1,0 +1,93 @@
+{
+  "schema": 1,
+  "decision": {
+    "scan_frames": 5,
+    "min_frames": 15,
+    "max_frames": 60,
+    "deadline_frames": 40,
+    "commit_frames": 25,
+    "http_timeout_seconds": 8,
+    "enemy_jobs": 8,
+    "tactic_jobs": 4,
+    "budget_usec": 4000,
+    "model": "qwen3:4b-instruct",
+    "num_ctx": 4096,
+    "num_predict": 128,
+    "build_interval_frames": 25,
+    "state_detail_frames": 25,
+    "state_detail_limit": 8,
+    "idle_scan_frames": 75,
+    "idle_stall_frames": 150,
+    "scout_goal_frames": 900
+  },
+  "reaction": {
+    "min_frames": 3,
+    "max_frames": 15,
+    "emergency_frames": 0
+  },
+  "micro": {
+    "cooldown_frames": 10,
+    "retreat_ratio": 0.35,
+    "kite_distance": 250,
+    "focus_radius": 500,
+    "error_probability": 0.07
+  },
+  "harass": {
+    "max_fraction": 0.2,
+    "min_army": 8,
+    "interval_frames": 75,
+    "front_separation": 700,
+    "guard_radius": 600,
+    "maximum_guards": 1
+  },
+  "messages": {
+    "interval_frames": 25,
+    "critical_interval_frames": 5,
+    "ttl_frames": 100,
+    "timeout_frames": 25,
+    "history_limit": 40,
+    "queue_limit": 64,
+    "dedup_frames": 50,
+    "silence_frames": 10
+  },
+  "team": {
+    "claim_frames": 50,
+    "help_radius": 700,
+    "help_cooldown_frames": 75,
+    "power_lock_frames": 15,
+    "push_window_frames": 30,
+    "human_role": "human",
+    "commitment_max_frames": 900,
+    "travel_units_per_second": 50,
+    "arrival_radius": 400
+  },
+  "roi": {
+    "risk_weight": 1.5,
+    "minimum": 0.7,
+    "memory_half_life_frames": 150,
+    "minimum_confidence": 0.35
+  },
+  "surprise": {
+    "minimum_interval_frames": 300,
+    "maximum_frequency": 0.08
+  },
+  "personality": {
+    "adapt_frames": 150,
+    "max_step": 0.05,
+    "minimum": 0.15,
+    "maximum": 0.85
+  },
+  "economy": {
+    "expand_money": 700,
+    "emergency_reserve": 400,
+    "cp_margin": 100,
+    "income_multiplier": 1.25,
+    "production_multiplier": 1.25
+  },
+  "tactics": {
+    "failures_before_switch": 2,
+    "result_frames": 150,
+    "plan_ttl_frames": 150,
+    "retry_frames": 300
+  }
+}

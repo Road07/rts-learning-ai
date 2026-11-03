@@ -1,0 +1,40 @@
+{
+  "schema": 1,
+  "id": "bfme-outcome-reward-v3",
+  "weights": {
+    "income": 0.10,
+    "enemy_units": 0.002,
+    "enemy_structures": 0.15,
+    "own_units_lost": -0.0025,
+    "own_structures_lost": -0.20,
+    "hero_deaths": -0.40,
+    "base_health": 0.50,
+    "hero_health": 0.15,
+    "visible_damage": 0.15,
+    "discovery": 0.002
+  },
+  "caps": {
+    "income": 0.25,
+    "enemy_units": 0.50,
+    "enemy_structures": 0.50,
+    "own_units_lost": 0.75,
+    "own_structures_lost": 0.75,
+    "hero_deaths": 1.0,
+    "base_health": 0.50,
+    "hero_health": 0.30,
+    "visible_damage": 0.25,
+    "discovery": 0.05
+  },
+  "value_scale": 1000.0,
+  "shaping_cap": 1.0,
+  "terminal_win": 10.0,
+  "terminal_loss": -10.0,
+  "decision_credit": {
+    "version": "action-credit-v1",
+    "logic_fps": 5,
+    "shaping_budget": 1.0,
+    "radius": 650.0,
+    "value_scale": 1000.0,
+    "horizons_seconds": {"attack":12,"defend":12,"help":18,"scout":30,"wait":12,"build":180,"train":90,"hero":180,"research":180,"science":60,"power":12,"enter":15,"exit":15,"stance":12,"formation":12,"cancel":12,"stop":12}
+  }
+}

@@ -1,0 +1,194 @@
+{
+  "schema": 1,
+  "map": "maps/map wor lostriand/map wor lostriand.map",
+  "seed": 271026,
+  "slots": [
+    "FactionDwarves",
+    "FactionWild",
+    "FactionDwarves",
+    "FactionElves",
+    "FactionIsengard",
+    "FactionMordor"
+  ],
+  "stages": {
+    "opening": {
+      "label": "Başlangıç",
+      "cash": 1000,
+      "farms": 0,
+      "groups": 0,
+      "heroes": 0,
+      "hero_levels": 0,
+      "siege": 0,
+      "rush_duration": 120,
+      "mid_duration": 420
+    },
+    "middle": {
+      "label": "Orta oyun",
+      "cash": 4000,
+      "farms": 4,
+      "groups": 4,
+      "heroes": 1,
+      "hero_levels": 2,
+      "siege": 0,
+      "rush_duration": 0,
+      "mid_duration": 100000
+    },
+    "late": {
+      "label": "Geç oyun",
+      "cash": 10000,
+      "farms": 10,
+      "groups": 6,
+      "heroes": 2,
+      "hero_levels": 5,
+      "siege": 1,
+      "rush_duration": 0,
+      "mid_duration": 0
+    }
+  },
+  "factions": {
+    "FactionDwarves": {
+      "farm": "DwarvenMineShaft",
+      "factories": [
+        "DwarfBarracks",
+        "DwarvenArcheryRange",
+        "DwarvenSiegeWorks"
+      ],
+      "units": [
+        "DwarvenGuardianHorde",
+        "DwarvenAxeThrowerHorde",
+        "DwarvenPhalanxHorde"
+      ],
+      "heroes": [
+        "DwarvenGloin",
+        "DwarvenDain"
+      ],
+      "siege": "DwarvenCatapult"
+    },
+    "FactionWild": {
+      "farm": "WildMineShaft",
+      "factories": [
+        "GoblinCave",
+        "WildSpiderPit",
+        "GoblinFissure"
+      ],
+      "units": [
+        "GoblinFighterHorde",
+        "GoblinArcherHorde",
+        "WildMarauderHorde",
+        "GoblinSpiderRiderHorde"
+      ],
+      "heroes": [
+        "WildAzog",
+        "WildGoblinKing"
+      ],
+      "siege": "WildMountainGiant"
+    },
+    "FactionMen": {
+      "farm": "GondorFarm",
+      "factories": [
+        "GondorBarracks",
+        "GondorArcherRange",
+        "GondorStable"
+      ],
+      "units": [
+        "GondorFighterHorde",
+        "GondorRangerHorde",
+        "GondorTowerShieldGuardHorde",
+        "GondorKnightHorde"
+      ],
+      "heroes": [
+        "GondorBoromir",
+        "GondorAragorn"
+      ],
+      "siege": "GondorTrebuchet"
+    },
+    "FactionElves": {
+      "farm": "ElvenMallornTree",
+      "factories": [
+        "ElvenBarracks",
+        "ElvenGreenPasture",
+        "ElvenEntMoot"
+      ],
+      "units": [
+        "ElvenLorienWarriorHorde",
+        "ElvenMirkwoodArcherHorde",
+        "ElvenMithlondSentryHorde",
+        "ElvenRivendellLancerHorde"
+      ],
+      "heroes": [
+        "ElvenGlorfindel",
+        "ElvenElrond"
+      ],
+      "siege": "RohanGenericEnt"
+    },
+    "FactionMordor": {
+      "farm": "MordorSlaughterHouse",
+      "factories": [
+        "MordorOrcPit",
+        "MordorHaradrimPalace",
+        "MordorSiegeWorks"
+      ],
+      "units": [
+        "MordorFighterHorde",
+        "MordorArcherHorde",
+        "MordorEasterlingHorde",
+        "MordorHaradrimRiderHorde"
+      ],
+      "heroes": [
+        "MordorGothmog",
+        "MordorMouthOfSauron"
+      ],
+      "siege": "MordorCatapult"
+    },
+    "FactionAngmar": {
+      "farm": "AngmarMill",
+      "factories": [
+        "AngmarBarracks",
+        "AngmarDen",
+        "AngmarHallofTwilight"
+      ],
+      "units": [
+        "AngmarOrcWarriors",
+        "AngmarDarkRangerHorde",
+        "AngmarHillTrollHorde",
+        "AngmarSnowTrollHorde"
+      ],
+      "heroes": [
+        "AngmarHwaldar",
+        "AngmarKarsh"
+      ],
+      "siege": "AngmarTrollSling"
+    },
+    "FactionIsengard": {
+      "farm": "IsengardFurnace",
+      "factories": [
+        "IsengardUrukPit",
+        "IsengardWargPit",
+        "IsengardSiegeWorks"
+      ],
+      "units": [
+        "IsengardFighterHorde",
+        "IsengardUrukCrossbowHorde",
+        "IsengardPikemanHorde",
+        "IsengardWargRiderHorde"
+      ],
+      "heroes": [
+        "IsengardLurtz",
+        "IsengardSaruman"
+      ],
+      "siege": "IsengardBallista"
+    }
+  },
+  "rules": [
+    0,
+    0,
+    0,
+    100,
+    1000,
+    0,
+    -1,
+    -1,
+    -1,
+    -1
+  ]
+}

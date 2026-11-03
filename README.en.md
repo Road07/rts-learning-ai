@@ -1,0 +1,60 @@
+# RTS Learning AI — English
+
+## Purpose
+
+We are developing our own neural decision model and training infrastructure
+to bring learning AI to RTS games. The goal is an agent that makes decisions
+from observations and improves through experience, rather than following
+one prescribed strategy.
+
+Our first environment is **OpenBFME + Rise of the Witch-king**. Eventually
+we want to separate a common RTS decision system from game-specific
+observation/action adapters. Transfer to other RTS games is a research goal,
+not an implemented or demonstrated capability. It will require new
+integration, representations and training.
+
+## Current status: very early prototype
+
+**The project is still far from playable.** It should not be presented as
+a reliable BFME player, finished mod or competitive AI release. The model
+has not learned important mechanics such as efficient resource-building
+placement, connected wall construction and long-term strategy. It may place
+farms next to each other, misuse wall hubs and make poor economic or combat
+decisions.
+
+Experimental components currently include:
+
+- Small local neural scorers and training code in Python/NumPy.
+- Tactical and production/command selection from offered observations/actions.
+- Independent weights for seven factions, initialized from existing knowledge.
+- Automatic training and checkpoints in prepared 3v3 scenarios.
+- Outcome feedback associated with actors, targets and decision time windows.
+- Limited offline learning from eligible newly recorded normal matches.
+- Publication of validated completed checkpoint pairs for the next game launch.
+
+These components do not establish strong play or consistent improvement.
+Code still defines the available actions and candidate locations. Access to
+a spell does not mean the model knows how to use it. Outcome association is
+not exact causal credit assignment.
+
+## Priorities
+
+1. Represent the game's mechanics through better observations and actions.
+2. Measure economy placement, production, combat and team support separately.
+3. Establish reproducible comparisons against earlier model versions.
+4. Develop full-match strategy and learning from longer-term consequences.
+5. Separate reusable RTS learning components from individual game adapters.
+
+## Using the sources
+
+This is a research source snapshot. Packaging helpers still contain local
+directory assumptions and legacy internal dependencies. A portable,
+ready-to-run setup for other machines is not available yet. See the
+[architecture notes](docs/ARCHITECTURE.md) for scope and limitations.
+
+The game engine belongs to the independent OpenBFME upstream project; this
+repository supplies an AI integration patch on top of it. See
+[integration notes](integration/README.md). Retail assets, private replays
+and logs, game executables and local trained checkpoints are excluded.
+Source code is published under GPL-3.0, retaining upstream and third-party
+notices.

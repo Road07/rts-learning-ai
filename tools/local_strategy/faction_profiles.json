@@ -1,0 +1,9 @@
+{
+  "FactionDwarves": {"style": "Defensive. Protect economy and allies, build a durable army, counterattack when ready. Exploit a clear opportunity instead of waiting forever.", "reserve": 0.5, "attack_ratio": 1.5, "production_weight": "durable"},
+  "FactionWild": {"style": "Very aggressive. Maintain cheap mass production and multiple raids. Accept losses but do not abandon a critically threatened home base.", "reserve": 0.15, "attack_ratio": 0.8, "production_weight": "swarm"},
+  "FactionMordor": {"style": "Very aggressive mass army. Replace losses quickly, apply constant pressure, add monsters and siege later. Respond to serious home threats.", "reserve": 0.2, "attack_ratio": 0.9, "production_weight": "swarm"},
+  "FactionElves": {"style": "Balanced and careful. Protect ranged units, preserve veteran forces, support allies and avoid unfavorable engagements.", "reserve": 0.35, "attack_ratio": 1.3, "production_weight": "balanced"},
+  "FactionMen": {"style": "Balanced combined arms, steady economy, help allies when spare forces are available. Adapt targets to observed threats.", "reserve": 0.35, "attack_ratio": 1.15, "production_weight": "balanced"},
+  "FactionIsengard": {"style": "Balanced efficient combined arms. Develop upgrades and counters, coordinate a strong attack without sacrificing home defence.", "reserve": 0.3, "attack_ratio": 1.15, "production_weight": "balanced"},
+  "FactionAngmar": {"style": "Assemble a powerful mixed army. Favor coordinated attacks over small sacrificial raids; retreat to rebuild when outmatched.", "reserve": 0.4, "attack_ratio": 1.4, "production_weight": "elite"}
+}
