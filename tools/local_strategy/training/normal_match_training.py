@@ -8,7 +8,8 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "service"))
 from episode_policy import probabilities
 from reward_policy import calculate_episode
-from action_credit import calculate as calculate_credit, key as credit_key
+from action_credit import calculate as calculate_credit, key as credit_key, credit_version
+from economy_evaluation import evaluate as evaluate_economy
 
 
 def records(path, events):
@@ -82,7 +83,7 @@ def imitation_update(model, traces, weight, learning_rate=.001):
     return {"updated":bool(norm>1e-12),"actions":len(cached),"kl":kl,"method":"offline_signed_outcome_contrast" if any("credit_weight" in t for t in selected) else "legacy_reward_weighted_imitation"}
 
 
-def replay_one(model, spend_model, root):
+def replay_one(model, spend_model, root, expected_credit_version=None):
     root = Path(root)
     runs = root / "AI-Egitim/otomatik-dongu"
     used = set()
@@ -93,6 +94,7 @@ def replay_one(model, spend_model, root):
         except (OSError,ValueError,KeyError): continue
     for match in read_matches(root / "AI-Yeni-Model/ai-service/logs", root / "AI-Yeni-Model/logs"):
         if match["id"] in used: continue
+        if expected_credit_version is not None and credit_version(match["start"]["reward_tuning"])!=expected_credit_version:continue
         players = {}
         for row in match["rows"]: players.setdefault(tuple(sorted(map(int,row["team_members"]))),set()).add(int(row["player"]))
         teams = []
@@ -132,6 +134,7 @@ def replay_one(model, spend_model, root):
             continue
         return [{"id":match["id"],"match_id":match["start"]["match_id"],"source":match["source"],
                  "method":"offline signed local outcomes; not on-policy or human labels" if credit else "legacy winning-bot imitation",
+                 "economy_evaluation":evaluate_economy(match["rows"],match["credit_events"]),
                  "decision_credit_metrics":credit_metrics,"rewards":[r for _,r in teams],"update":tactic,"spend_update":spend}]
     return []
 

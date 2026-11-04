@@ -45,6 +45,18 @@ not exact causal credit assignment.
 4. Develop full-match strategy and learning from longer-term consequences.
 5. Separate reusable RTS learning components from individual game adapters.
 
+## Recent infrastructure updates
+
+- A mechanics observation/action interface and inputs derived from the installed game's public numerical rules.
+- Economy/production measurements and checkpoint comparisons with matching factions, opponents and simulation-frame budgets.
+- Native unit and research queue start/cancellation receipts; bounded decision feedback for observed discarded production work.
+- Versioned `action-credit-v3` rewards, preserving earlier policies and all seven faction banks.
+- Interrupted-evaluation recovery, phase reporting and atomic checkpoint activation.
+
+These are tools for measuring learning. Meta adaptation, strong strategy, competitive play and consistent improvement remain unverified. Adding game definitions to inputs does not mean the model has learned them. Short runtime checks are not evidence of full-match playing strength.
+
+[Roadmap / İlerleme planı](docs/ROADMAP.md) · [Current reward scope](tools/local_strategy/training/LEARNING-FEEDBACK-V3.md)
+
 ## Using the sources
 
 This is a research source snapshot. Packaging helpers still contain local

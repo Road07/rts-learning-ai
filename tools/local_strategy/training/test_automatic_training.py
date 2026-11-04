@@ -21,8 +21,9 @@ class TrainingChecks(unittest.TestCase):
         obs={"money":1000}
         choices=legal_spend_options([{"id":"train:2:Soldier","kind":"train","cost":100}],1000)
         x=np.stack([spend_features(obs,c) for c in choices])
-        old=DecisionNet(x.shape[1]-32)
-        before=old.forward(x[:,:-32])[0]
+        legacy=len(spend_features(obs,choices[0],include_mechanics=False))-32
+        old=DecisionNet(legacy)
+        before=old.forward(x[:,:legacy])[0]
         test_root=Path(__file__).resolve().parent
         with tempfile.TemporaryDirectory(dir=test_root) as directory:
             self.assertEqual(Path(directory).resolve().parent,test_root)

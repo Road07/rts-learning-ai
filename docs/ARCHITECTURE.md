@@ -63,3 +63,15 @@ eğitiminden ayrı bir offline adımdır. Kısa kontroller güçlü oyun kanıt�
 Kaynaklar yerel klasörlere ve bu depoya eklenmeyen veri/paket girdilerine
 başvurabilir. Bu nedenle kaynak anlık görüntüsü hazır bir oyun paketi değildir.
 İlk hedef taşınabilir, ölçülebilir ve güvenilir bir araştırma altyapısı kurmaktır.
+
+## Current interfaces / Güncel arayüzler
+
+The current feature widths are 385 for tactics and 383 for production/commands. Mechanics and public game-rule features are appended with zero-initialized rows when older checkpoints load, preserving all faction banks. Not every catalogue field is an independent neural input. Generated catalogues and learned checkpoints are not distributed.
+
+`action-credit-v3` retains v2's bounded economy/other feedback split and adds verified research cancellation/restart association. Native research order IDs remain zero; a separate observation receipt identity distinguishes instances. Missing history, automatic cancellation and changed observed context do not produce invented labels. This is association, not a counterfactual proof of a strategic mistake. See the [v3 specification](../tools/local_strategy/training/LEARNING-FEEDBACK-V3.md).
+
+Paired evaluations pin factions, opponents and simulation-frame budgets. Interrupted individual games restart; completed evaluation phases can be reused. Automatic activation verifies a completed model pair, not a demonstrated playing-strength improvement. The model continues to select from bounded legal candidates rather than unrestricted actions.
+
+Güncel girdiler taktik için 385, üretim/komut için 383 genişliğindedir. Eski checkpointler sıfır satırlarla genişletilir; fraksiyon bankaları korunur. Katalogdaki her alan ayrı neural girdi değildir. Üretilmiş kataloglar ve ağırlıklar yayımlanmaz.
+
+V3, gerçek araştırma iptal/yeniden başlatma olaylarını ayrı gözlem kimliğiyle eşleştirir. Eksik geçmiş, otomatik iptal veya değişen gözlenen bağlam için etiket uydurmaz. Bu ilişki, kararın kesin stratejik hata olduğu anlamına gelmez. Eş değerlendirme ve kesintiden devam uygulanmıştır; otomatik aktarım güçlü oynanış onayı değildir.

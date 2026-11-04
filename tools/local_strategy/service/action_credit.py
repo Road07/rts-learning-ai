@@ -1,5 +1,5 @@
 """Bounded outcome association by actor, target and time; never counterfactual causality."""
-from collections import defaultdict
+from collections import defaultdict, Counter
 from bisect import bisect_left, bisect_right
 import math
 
@@ -23,8 +23,96 @@ def cost(o):
     return value
 
 
+def credit_version(tuning): return tuning.get("decision_credit",{}).get("version",VERSION)
+
+
+def cancel_loop_credit(cfg,timeline,actions,add,metrics):
+    window=int(5*float(cfg.get("cancel_loop_seconds",30)))
+    research_enabled=cfg.get("version")=="action-credit-v3"
+    radius=float(cfg["radius"]);scale=float(cfg["value_scale"])
+    for player,samples in timeline.items():
+        seen=set();receipts=[]
+        for row in samples:
+            if not row.get("production_receipts_complete",False): continue
+            for event in row.get("production_receipts",[]):
+                identity=(int(event["producer"]),int(event["serial"]))
+                if identity in seen: continue
+                seen.add(identity);receipts.append(event)
+        receipts.sort(key=lambda r:(int(r["frame"]),int(r["serial"])))
+        queued={}
+        def view(frame):
+            eligible=[r for r in samples if int(r["frame"])<=frame]
+            return eligible[-1] if eligible else None
+        for index,receipt in enumerate(receipts):
+            producer=int(receipt["producer"]);pid=int(receipt["production_id"]);frame=int(receipt["frame"])
+            # Research is observed now, but v2 rewards remain unit/hero-only.
+            # Native research productionID is always zero; queue_receipt_id is
+            # a separate observation identity, never a replacement gameplay ID.
+            research=receipt.get("queue_kind")=="research"
+            if research:
+                if receipt["kind"]=="cancelled":
+                    metrics["observed_research_cancellations"]+=1
+                    metrics["observed_research_cancellations_player_%d"%player]+=1
+                if not research_enabled: continue
+            queue_token=int(receipt.get("queue_receipt_id",0))
+            queue_key=(producer,"research",queue_token) if research else (producer,pid)
+            if research and queue_token<=0:continue
+            if receipt["kind"]=="queued": queued[queue_key]=receipt;continue
+            if receipt["kind"]!="cancelled" or receipt.get("automatic") or int(receipt.get("produced",0))>0:continue
+            original=queued.get(queue_key)
+            if not original: continue
+            if research and receipt.get("template")!=original.get("template"):continue
+            matched=[a for a in actions.values() if a["player"]==player and a["head"]=="spend" and a["kind"]=="cancel" and a["submitted"]
+                     and int(a["operation"].get("producer",0))==producer and int(a["operation"].get("variant",-1))==pid and a["frame"]<=frame<=a["end"]]
+            if research:
+                matched=[a for a in matched if a["operation"].get("queue_kind")=="research"
+                         and int(a["operation"].get("queue_receipt_id",0))==queue_token
+                         and a["operation"].get("template")==original["template"]]
+            if not matched: continue
+            restart=next((r for r in receipts[index+1:] if r["kind"]=="queued" and int(r["producer"])==producer
+                          and r["template"]==original["template"] and frame<int(r["frame"])<=frame+window),None)
+            if not restart: continue
+            if research and (restart.get("queue_kind")!="research" or int(restart.get("queue_receipt_id",0))<=0 or int(restart["queue_receipt_id"])==queue_token):continue
+            before,after=view(frame),view(int(restart["frame"]))
+            if not before or not after: continue
+            source=objects(before,"own_assets").get(producer);later=objects(after,"own_assets").get(producer)
+            if not source or not later or health(later)<health(source):continue
+            if research:
+                context=[r for r in samples if int(before["frame"])<=int(r["frame"])<=int(after["frame"])]
+                signature=lambda r:sorted((str(e.get("template","")),int(e["id"])) for e in r.get("visible_enemies",[]))
+                if frame-int(before["frame"])>50 or int(restart["frame"])-int(after["frame"])>50:continue
+                if any(not r.get("production_receipts_complete",False) for r in samples if int(original["frame"])<=int(r["frame"])<=int(restart["frame"])):continue
+                if any(int(b["frame"])-int(a["frame"])>50 for a,b in zip(context,context[1:])):continue
+                if any(signature(r)!=signature(before) or any(near(e,source,radius) for e in r.get("visible_enemies",[])) or producer not in objects(r,"own_assets") or health(objects(r,"own_assets")[producer])<health(source) for r in context):continue
+            signature=lambda r:sorted((str(e.get("template","")),int(e["id"])) for e in r.get("visible_enemies",[]))
+            if signature(before)!=signature(after):
+                composition=lambda r:Counter(str(e.get("template","")) for e in r.get("visible_enemies",[]))
+                identity_only=composition(before)==composition(after)
+                local=lambda r:sorted((str(e.get("template","")),int(e["id"])) for e in r.get("visible_enemies",[]) if near(e,source,radius))
+                reason="identity_only" if identity_only else "template_counts"
+                metrics["cancel_excluded_enemy_change_"+reason]+=1
+                metrics["cancel_excluded_enemy_change_"+reason+"_player_%d"%player]+=1
+                if local(before)==local(after):metrics["cancel_excluded_enemy_change_local_unchanged"]+=1
+                if not any(near(e,source,radius) for r in (before,after) for e in r.get("visible_enemies",[])):
+                    metrics["cancel_excluded_enemy_change_no_nearby_enemy"]+=1
+                continue
+            if any(near(e,source,radius) for r in (before,after) for e in r.get("visible_enemies",[])):continue
+            progress=float(receipt.get("progress",0))/100.;work=float(receipt.get("work_frames",0))/5.
+            if not math.isfinite(progress) or progress<0 or not math.isfinite(work) or work<0:raise ValueError("Invalid cancellation receipt")
+            progress=min(1.,progress)  # A blocked hero entry can run past 100%; lost work cannot exceed one order.
+            if progress<=0 or work<=0:continue
+            action=max(matched,key=lambda a:a["frame"])
+            if research and (not action["matured"] or cost(receipt)<=0):continue
+            add(action,"research_restart_delay" if research else "production_restart_delay",-cost(receipt)*progress/scale)
+            metrics["verified_research_restart_cycles" if research else "verified_cancel_restart_cycles"]+=1
+            metrics["discarded_research_seconds" if research else "discarded_production_seconds"]+=work
+
+
 def calculate(tuning, rows, events):
     cfg=dict(DEFAULTS,**tuning.get("decision_credit",{}))
+    version=credit_version(tuning);v2=version in ("action-credit-v2","action-credit-v3")
+    if version not in (VERSION,"action-credit-v2","action-credit-v3"):raise ValueError("Unknown action credit policy")
+    if v2 and (not 0<float(cfg.get("economy_budget_fraction",.15))<1 or not 0<float(cfg.get("economy_roi_seconds",180))<=3600 or not 0<float(cfg.get("cancel_loop_seconds",30))<=300):raise ValueError("Invalid v2 credit tuning")
     fps, radius, scale = float(cfg["logic_fps"]),float(cfg["radius"]),float(cfg["value_scale"])
     budget=float(cfg["shaping_budget"])
     if fps!=5 or not 0<budget<=1 or radius<=0 or scale<=0: raise ValueError("Invalid credit tuning")
@@ -98,6 +186,14 @@ def calculate(tuning, rows, events):
                     if at and near(at,o,radius): candidates.append(a)
                 parent=latest(candidates)
                 if parent: birth_parents[player,oid]=parent
+            parent=birth_parents.get((player,oid))
+            if v2 and parent and o.get("economy") and o.get("complete",False) and "paid_cost" in o:
+                invested=float(o["paid_cost"])
+                if not math.isfinite(invested) or invested<0:raise ValueError("Invalid paid building cost")
+                if invested>0 and "economy_completed_frame" not in parent:
+                    parent["economy_completed_frame"]=frame;parent["economy_invested"]=invested
+                    parent["economy_end"]=frame+int(fps*float(cfg.get("economy_roi_seconds",180)))
+                    parent.setdefault("income_received",0.)
         # Only real, cursor-identified economy payments; refunds are absent.
         for payment in row.get("income_payments",[]):
             serial=(player,int(payment["serial"]))
@@ -105,12 +201,13 @@ def calculate(tuning, rows, events):
             income_seen.add(serial)
             oid=int(payment["object"]); parent=birth_parents.get((player,oid))
             source=own.get(oid,old_own.get(oid,{}))
-            if parent and source.get("economy") and parent["frame"]<=int(payment["frame"])<=parent["end"]:
+            end=parent.get("economy_end",-1) if parent and v2 else parent["end"] if parent else -1
+            if parent and source.get("economy") and parent["frame"]<=int(payment["frame"])<=end:
                 paid=float(payment["amount"])
                 if not math.isfinite(paid) or paid<0: raise ValueError("Invalid economy payment")
                 component="economy_recovery_return" if parent["frame"]>=economy_loss.get(player,10**18) else "economy_return"
                 invested=cost(parent["operation"])
-                add(parent,component,paid/(scale+invested))
+                if not v2: add(parent,component,paid/(scale+invested))
                 parent["income_received"]=parent.get("income_received",0.)+paid
                 metrics["attributed_income"]+=paid
 
@@ -197,11 +294,23 @@ def calculate(tuning, rows, events):
                     add(action,"verified_repair_recovery",amount*.5)
                     repair_paid[paid_key]=repair_paid.get(paid_key,0.)+amount
         previous_by_player[player]=row
+    if v2:
+        cancel_loop_credit(cfg,timeline,actions,add,metrics)
+        for action in actions.values():
+            end=action.get("economy_end")
+            if end is None or int(timeline[action["player"]][-1]["frame"])<end:continue
+            invested=action["economy_invested"]
+            component="economy_recovery_return" if action["frame"]>=economy_loss.get(action["player"],10**18) else "economy_return"
+            add(action,component,(action.get("income_received",0.)-invested)/(scale+invested))
     # A finite per-team shaping budget: many commands/actors cannot multiply reward.
     team_totals=defaultdict(float); team_counts=defaultdict(int); terminal={}
     for a in actions.values():
         team_totals[a["team"]]+=sum(abs(x) for x in a["components"].values())
         team_counts[a["team"]]+=1
+    category_totals=defaultdict(float)
+    if v2:
+        for a in actions.values():
+            for name,value in a["components"].items():category_totals[a["team"],name.startswith("economy_")]+=abs(value)
     for player,samples in timeline.items():
         final=samples[-1]; team=tuple(sorted(map(int,final["team_members"])))
         if final.get("won"): terminal[team]=float(tuning["terminal_win"])
@@ -209,12 +318,20 @@ def calculate(tuning, rows, events):
     result={}
     for identity,a in actions.items():
         factor=min(1.,budget/max(team_totals[a["team"]],1e-12))
-        components={k:v*factor for k,v in a["components"].items()}
+        if v2:
+            fraction=float(cfg.get("economy_budget_fraction",.15))
+            if not 0<fraction<1:raise ValueError("Invalid economy budget fraction")
+            components={k:v*budget*(fraction if k.startswith("economy_") else 1-fraction)/(1.+category_totals[a["team"],k.startswith("economy_")]) for k,v in a["components"].items()}
+        else:components={k:v*factor for k,v in a["components"].items()}
         outcome=terminal.get(a["team"],0.)/max(1,team_counts[a["team"]])
-        result[identity]={"version":VERSION,"components":components,"matured":a["matured"],
+        result[identity]={"version":version,"components":components,"matured":a["matured"],
                           "observed_events":a["observed_events"],"horizon_end":a["end"],
                           "terminal_share":outcome,"reward":sum(components.values())+outcome,
                           "attribution":"observed actor/target/time association, not proven causality"}
-        if a.get("income_received") is not None and cost(a["operation"])>0:
-            result[identity]["realized_roi"]=a["income_received"]/cost(a["operation"])
+        invested=a.get("economy_invested",cost(a["operation"]))
+        if a.get("income_received") is not None and invested>0:
+            result[identity]["realized_roi"]=a["income_received"]/invested
+        if v2 and "economy_end" in a:
+            result[identity]["economy_horizon_end"]=a["economy_end"]
+            result[identity]["economy_matured"]=int(timeline[a["player"]][-1]["frame"])>=a["economy_end"]
     return result,dict(metrics)

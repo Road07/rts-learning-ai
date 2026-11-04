@@ -60,11 +60,12 @@ class FactionChecks(unittest.TestCase):
             for f in FACTIONS:
                 for k in model.weights: np.testing.assert_array_equal(restored.factions[f].weights[k],model.factions[f].weights[k])
             inputs = len(spend_features({},WAIT))
-            old = DecisionNet(inputs-32).ensure_factions(); old.save(path)
+            legacy = len(spend_features({},WAIT,include_mechanics=False))-32
+            old = DecisionNet(legacy).ensure_factions(); old.save(path)
             migrated = load_spend_model(path)
             for f in FACTIONS:
                 self.assertEqual(migrated.factions[f].weights["w0"].shape[0],inputs)
-                np.testing.assert_array_equal(migrated.factions[f].weights["w0"][:-32],old.factions[f].weights["w0"])
+                np.testing.assert_array_equal(migrated.factions[f].weights["w0"][:legacy],old.factions[f].weights["w0"])
             migrated.save(path); DecisionNet.load(path)
 
 

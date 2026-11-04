@@ -14,7 +14,7 @@ import subprocess
 import sys
 import threading
 import time
-from decision_net import DecisionNet
+from decision_net import DecisionNet, load_tactical_model
 from fandom_policy import FandomPolicy
 from sequence_policy import SequencePolicy
 from match_feedback import MatchFeedback
@@ -23,9 +23,11 @@ from mechanics_knowledge import MechanicsKnowledge
 from production_policy import ProductionPolicy
 from youtube_knowledge import YouTubeKnowledge
 from episode_policy import EpisodePolicy
-from spend_policy import spend_features, legal_spend_options, ENCODING
+from spend_policy import spend_features, legal_spend_options, load_spend_model, ENCODING
 from reward_policy import RewardLedger
 from normal_match_capture import NormalMatchCapture
+from economy_evaluation import EconomyEvaluation
+from public_game_rules import PublicGameRules
 
 
 def main():
@@ -34,7 +36,7 @@ def main():
     parser.add_argument("--arena", choices=["opening", "middle", "late"])
     parser.add_argument("--seconds", type=int, default=6)
     parser.add_argument("--arena-speed", type=float, default=4)
-    parser.add_argument("--arena-case", choices=["baseline", "pressure", "counters", "team", "hero", "sequence", "production","access"], default="baseline")
+    parser.add_argument("--arena-case", choices=["baseline", "pressure", "counters", "team", "hero", "sequence", "production","access","mechanics","cp-accounting","learning-feedback"], default="baseline")
     parser.add_argument("--episode-dir", type=Path)
     parser.add_argument("--episode-seed", type=int, default=42)
     parser.add_argument("--episode-mode", choices=["sample", "evaluate"], default="sample")
@@ -57,6 +59,7 @@ def main():
     server = None; thread = None; code = 1; failure = None
     normal_capture = NormalMatchCapture()
     normal_match = None
+    economy = EconomyEvaluation()
     def status(phase, **fields):
         state.update(phase=phase, updated_utc=datetime.now(timezone.utc).isoformat(), **fields)
         temp = folder / "status.tmp"
@@ -65,31 +68,43 @@ def main():
     with logfile.open("w", encoding="utf-8", buffering=1) as log:
         def record(event, **fields):
             log.write(json.dumps({"event": event, "backend": "decision_net_v0", **fields}, ensure_ascii=False) + "\n")
+        def save_economy():
+            if not normal_match or args.arena: return
+            summary = economy.summary()
+            summary.update(match_id=normal_match,tactic_sha256=digest,spend_sha256=config["spend_sha256"],
+                           window_ends_at_last_request=True,fixture=False)
+            target=logfile.with_name(logfile.stem+"-"+hashlib.sha256(normal_match.encode()).hexdigest()[:12]+".economy.json")
+            target.write_text(json.dumps(summary,ensure_ascii=False,indent=2,allow_nan=False),encoding="utf-8")
+            latest=folder / "latest-economy-evaluation.json"
+            temporary=latest.with_suffix(".tmp")
+            temporary.write_text(target.read_text(encoding="utf-8"),encoding="utf-8")
+            temporary.replace(latest)
+            record("economy_evaluation_saved",path=str(target),match_id=normal_match)
         try:
             status("loading")
             weights = Path(config["weights"])
             digest = hashlib.sha256(weights.read_bytes()).hexdigest()
             if digest != config["sha256"]: raise ValueError("Model dosyası beklenen eğitim çıktısıyla eşleşmiyor")
-            model = DecisionNet.load(weights).ensure_factions()
+            model = load_tactical_model(weights).ensure_factions()
             reward_path=Path(config["reward_config"])
             if hashlib.sha256(reward_path.read_bytes()).hexdigest()!=config["reward_sha256"]: raise ValueError("Reward configuration hash mismatch")
             rewards=RewardLedger.load(reward_path)
-            record("reward_config_loaded",version=rewards.tuning["id"],sha256=config["reward_sha256"],normal_match_updates_weights=False)
+            record("reward_config_loaded",version=rewards.tuning["id"],credit_version=rewards.tuning.get("decision_credit",{}).get("version","action-credit-v1"),sha256=config["reward_sha256"],normal_match_updates_weights=False)
             if args.episode_dir:
                 import shutil
                 shutil.copy2(reward_path,args.episode_dir / "reward-tuning.json")
             episode = EpisodePolicy(args.episode_seed, args.episode_mode) if args.episode_dir else None
-            opponent = DecisionNet.load(config.get("opponent_weights", weights)).ensure_factions() if episode else None
+            opponent = load_tactical_model(config.get("opponent_weights", weights)).ensure_factions() if episode else None
             spend_model = None
             if config.get("spend_weights"):
                 if config.get("spend_encoding")!=ENCODING or hashlib.sha256(Path(config["spend_weights"]).read_bytes()).hexdigest()!=config["spend_sha256"]:
                     raise ValueError("Spend checkpoint/encoding mismatch")
-                spend_model=DecisionNet.load(config["spend_weights"]).ensure_factions()
+                spend_model=load_spend_model(config["spend_weights"]).ensure_factions()
             strict=bool(config.get("strict_model_only",False))
             if strict and spend_model is None: raise ValueError("Model-only mode needs a spending checkpoint")
             if strict and args.arena_case=="sequence": raise ValueError("Replay command override fixture is unavailable in model-only mode")
-            opponent_spend=DecisionNet.load(config["opponent_spend_weights"]).ensure_factions() if episode and config.get("opponent_spend_weights") else spend_model
-            if strict: record("model_only_loaded",native_brain=False,scripted_advice=False,fallback=False,spend_sha256=config["spend_sha256"])
+            opponent_spend=load_spend_model(config["opponent_spend_weights"]).ensure_factions() if episode and config.get("opponent_spend_weights") else spend_model
+            if strict: record("model_only_loaded",native_brain=False,scripted_advice=False,fallback=False,spend_sha256=config["spend_sha256"],feature_encoding="rts-mechanics-v1+bfme-public-rules-v2+native-queue-v1",tactical_inputs=int(model.weights["w0"].shape[0]),spend_inputs=int(spend_model.weights["w0"].shape[0]))
             if episode:
                 record("episode_start", seed=args.episode_seed, mode=args.episode_mode,
                        weights_sha256=digest, opponent_sha256=hashlib.sha256(Path(config.get("opponent_weights", weights)).read_bytes()).hexdigest())
@@ -115,6 +130,13 @@ def main():
             if hashlib.sha256(mechanics_path.read_bytes()).hexdigest()!=config["mechanics_sha256"]:
                 raise ValueError("Mechanics source index hash mismatch")
             mechanics=MechanicsKnowledge(mechanics_path)
+            public_rules=None
+            if config.get("game_rules"):
+                public_rules=PublicGameRules(config["game_rules"])
+                if public_rules.sha256!=config["game_rules_sha256"]: raise ValueError("Public game rule hash mismatch")
+                record("public_rules_loaded",encoding="bfme-public-rules-v2",sha256=public_rules.sha256,
+                       objects=len(public_rules.data["cards"]),tables={k:len(v) for k,v in public_rules.data["tables"].items()},
+                       numeric_inputs_enabled=True,base_values_not_live=True)
             youtube_path=Path(config["youtube_lessons"])
             if hashlib.sha256(youtube_path.read_bytes()).hexdigest()!=config["youtube_sha256"]: raise ValueError("YouTube evidence hash mismatch")
             youtube=YouTubeKnowledge(youtube_path)
@@ -150,17 +172,25 @@ def main():
                         observation, candidates = request["observation"], request["candidates"]
                         if not isinstance(observation, dict) or not isinstance(candidates, list) or not 1 <= len(candidates) <= 64: raise ValueError("Invalid state/candidates")
                         if any(not isinstance(c, dict) or not isinstance(c.get("id"), str) or not isinstance(c.get("description", ""), str) for c in candidates): raise ValueError("Invalid candidate")
+                        if public_rules:
+                            rule_inputs=public_rules.attach(observation,candidates,request.get("production_options",[]))
+                            record("public_rule_inputs",player=observation.get("player_index"),**rule_inputs)
                         start = time.perf_counter()
                         match_id = str(observation.get("match_id", ""))
                         if strict and not args.arena and match_id and normal_match != match_id:
+                            save_economy()
+                            economy.players.clear()
                             rewards = RewardLedger.load(reward_path)
                             normal_match = match_id
                             record("normal_match_start", schema="normal-trajectory-v1", match_id=match_id,
                                    diagnostic_session=observation.get("diagnostic_session"),
                                    tactic_sha256=digest, spend_sha256=config["spend_sha256"],
-                                   reward_tuning=rewards.tuning, fixture=False)
+                                   reward_tuning=rewards.tuning, fixture=False,game_rules_sha256=config.get("game_rules_sha256"))
                         for sample in observation.get("reward_observations",[]):
                             record("reward_observation",sample=sample,match_id=match_id)
+                            if strict and not args.arena:
+                                try: economy.observe(sample)
+                                except (ValueError,KeyError,TypeError) as error: record("economy_evaluation_error",error=str(error))
                             try:
                                 reward_update=rewards.observe(sample)
                                 record("reward_update",player=sample["player"],frame=sample["frame"],**reward_update)
@@ -234,6 +264,7 @@ def main():
                 command = [sys.executable, config["arena_script"], args.arena, "--seconds", str(args.seconds), "--model", "on"]
                 command += ["--case", args.arena_case]
                 command += ["--speed", str(args.arena_speed)]
+                if config.get("arena_sim_frames"): command += ["--sim-frames",str(config["arena_sim_frames"])]
                 if config.get("arena_factions"): command += ["--factions", ",".join(config["arena_factions"])]
                 if episode:
                     command += ["--seed", str(args.episode_seed), "--output-dir", str(args.episode_dir / "arena")]
@@ -257,6 +288,8 @@ def main():
         finally:
             if server: server.shutdown(); server.server_close()
             if thread: thread.join(timeout=2)
+            try: save_economy()
+            except (OSError,ValueError,KeyError,TypeError) as error: record("economy_evaluation_error",error=str(error))
             status("stopped", game_pid=None, exit_code=code, error=failure)
             lock.close()
             if args.episode_dir:

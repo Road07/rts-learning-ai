@@ -48,3 +48,11 @@ private match recordings and local trained checkpoints are not distributed.
 OpenBFME is an independent upstream project. Our AI work does not claim
 authorship of its engine. This is an unofficial fan research project,
 not affiliated with or endorsed by the original game publishers.
+
+## Güncel çalışma / Current work
+
+Sürümlenmiş karar geri bildirimi, gerçek üretim/araştırma olay kayıtları ve eş koşullu model değerlendirmesi geliştiriliyor. Öğrenme ve rekabetçilik henüz kanıtlanmadı.
+
+Current work focuses on versioned decision feedback, native production/research receipts and matched checkpoint evaluation. Improved playing strength has not been demonstrated.
+
+[İlerleme planı / Roadmap](docs/ROADMAP.md) · [Mimari / Architecture](docs/ARCHITECTURE.md)

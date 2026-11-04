@@ -25,7 +25,7 @@ def bag(items):
     return [magnitude(count, 20) for count in result]
 
 
-def features(observation, candidate):
+def features(observation, candidate, include_mechanics=True, include_rules=True):
     obs = observation
     context = [float(obs.get("faction") == f) for f in FACTIONS]
     context += [float(obs.get("personality") == p) for p in ["aggressive", "balanced", "defensive"]]
@@ -49,7 +49,14 @@ def features(observation, candidate):
                magnitude(number(r"available own groups (\d+)"), 20),
                float("structure" in description), float("enemy army" in description),
                number(r"readiness=([0-9.]+)"), float("ROI=" in description)]
-    return np.asarray(context + choice, dtype=np.float32)
+    extra=[]
+    if include_mechanics:
+        from mechanics_features import state_features,action_features
+        extra=state_features(observation)+action_features(candidate)
+        if include_rules:
+            from public_game_rules import tactical_features
+            extra+=tactical_features(observation,candidate)
+    return np.asarray(context + choice + extra, dtype=np.float32)
 
 
 class DecisionNet:
@@ -103,6 +110,14 @@ class DecisionNet:
                 self.factions[faction] = bank
         return self
 
+    def expand_inputs(self, inputs, allowed):
+        old=self.weights["w0"].shape[0]
+        if old==inputs: return self
+        if old not in allowed or old>inputs: raise ValueError("Unknown model feature dimensions")
+        for bank in [self]+list(self.factions.values()):
+            bank.weights["w0"]=np.vstack([bank.weights["w0"],np.zeros((inputs-old,64),dtype=np.float32)])
+        return self
+
     def for_faction(self, faction):
         if self.factions:
             if faction not in self.factions: raise ValueError("Unknown faction policy: " + str(faction))
@@ -124,3 +139,10 @@ class DecisionNet:
                     if any(value.shape != model.weights[key].shape or not np.isfinite(value).all() for key,value in bank.weights.items()):
                         raise ValueError("Invalid faction checkpoint: " + faction)
             return model
+
+
+def load_tactical_model(path):
+    inputs=len(features({}, {"id":"none"}))
+    legacy=len(features({}, {"id":"none"},include_mechanics=False))
+    mechanics=len(features({}, {"id":"none"},include_rules=False))
+    return DecisionNet.load(path).expand_inputs(inputs,[legacy,mechanics])

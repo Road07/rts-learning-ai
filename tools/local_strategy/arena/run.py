@@ -32,6 +32,8 @@ def prepare(config):
     entries['scripts/arena_competitive_checks.gd'] = (HERE/'competitive_checks.gd').read_bytes()
     entries['scripts/support_dispatch_checks.gd'] = (HERE/'support_dispatch_checks.gd').read_bytes()
     entries['scripts/model_access_checks.gd'] = (HERE/'model_access_checks.gd').read_bytes()
+    entries['scripts/mechanics_checks.gd'] = (HERE/'mechanics_checks.gd').read_bytes()
+    entries['scripts/learning_feedback_checks.gd'] = (HERE/'learning_feedback_checks.gd').read_bytes()
     entries['scenes/game.tscn'] = b'[gd_scene load_steps=2 format=3]\n[ext_resource type="Script" path="res://scripts/arena.gd" id="1"]\n[node name="Arena" type="Node3D"]\nscript = ExtResource("1")\n'
     (DEST/'OpenBFME.pck').write_bytes(pack(list(entries.items())))
     for name in ['OpenBFME.exe','OpenBFME.console.exe']:
@@ -54,9 +56,10 @@ def prepare(config):
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('stage',nargs='?',default='opening')
-    parser.add_argument('--case',choices=['baseline','pressure','counters','tunnels','hero','siege','team','human-log','sequence','production','access'],default='baseline')
+    parser.add_argument('--case',choices=['baseline','pressure','counters','tunnels','hero','siege','team','human-log','sequence','production','access','mechanics','cp-accounting','learning-feedback'],default='baseline')
     parser.add_argument('--seconds',type=float,default=6)
     parser.add_argument('--speed',type=float,default=4)
+    parser.add_argument('--sim-frames',type=int,default=0,help='Fixed logic-frame budget for paired evaluation.')
     parser.add_argument('--seed',type=int)
     parser.add_argument('--output-dir',type=Path,help='Private report directory for a training episode.')
     parser.add_argument('--view',action='store_true')
@@ -84,12 +87,13 @@ def main():
         if not args.view and not args.screenshot: command+=['--headless']
         command+=['--','--no-update-check','-mod',str(DEST/'mods'/stage),'--arena-stage='+stage,'--arena-case='+args.case,'--arena-seconds='+str(args.seconds),'--arena-speed='+str(args.speed),'--arena-model='+args.model,'--arena-report='+str(report)]
         if args.view: command+=['--arena-view']
+        if args.sim_frames: command+=['--arena-sim-frames='+str(args.sim_frames)]
         if args.screenshot: command+=['--arena-view','--arena-screenshot='+str(run_dir/(stage+'.png'))]
         print('ARENA '+stage+' / '+args.case,flush=True)
         with (run_dir/(stage+'.log')).open('w',encoding='utf-8') as log:
             process=subprocess.Popen(command,cwd=DEST,stdout=log,stderr=subprocess.STDOUT)
             try:
-                code=process.wait(timeout=None if args.view else 55+args.seconds)
+                code=process.wait(timeout=None if args.view else 55+args.seconds*(1.5 if args.sim_frames else 1))
             except subprocess.TimeoutExpired:
                 # The console launcher owns a child game executable on Windows.
                 if os.name=='nt': subprocess.run(['taskkill','/PID',str(process.pid),'/T','/F'],stdout=log,stderr=subprocess.STDOUT)

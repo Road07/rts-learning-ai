@@ -21,6 +21,8 @@ var stage = "opening"
 var case_name = "baseline"
 var model = "off"
 var seconds = 6.0
+var sim_frames = 0
+var sim_start = -1
 var speed = 4.0
 var view = false
 var report_path = ""
@@ -48,8 +50,12 @@ var training_initial_finance: Dictionary = {}
 var training_lease_frame = -100
 var training_purchase_receipts: Array = []
 var model_access_validation: Dictionary = {}
+var mechanics_validation: Dictionary = {}
+var cp_validation: Dictionary = {}
+var feedback_validation: Dictionary = {}
 
 func model_fixture_reserved_ids() -> Array:
+	if case_name=="learning-feedback": return [int(feedback_validation.get("producer",0)),int(feedback_validation.get("research_producer",0))]
 	if case_name!="access" or model_access_validation.is_empty(): return []
 	return [int(model_access_validation.get("rider",0)),int(model_access_validation.get("pike",0)),int(model_access_validation.get("thrall",0)),int(model_access_validation.get("ability_source",0))]
 
@@ -146,6 +152,7 @@ func boot():
 		if arg.begins_with("--arena-case="): case_name=arg.get_slice("=",1)
 		if arg.begins_with("--arena-model="): model=arg.get_slice("=",1)
 		if arg.begins_with("--arena-seconds="): seconds=float(arg.get_slice("=",1))
+		if arg.begins_with("--arena-sim-frames="): sim_frames=int(arg.get_slice("=",1))
 		if arg.begins_with("--arena-speed="): speed=float(arg.get_slice("=",1))
 		if arg.begins_with("--arena-report="): report_path=arg.substr(15)
 		if arg=="--arena-view": view=true
@@ -213,6 +220,24 @@ func boot():
 		require(int(player_state.cp_used)<=int(player_state.cp_limit),"fixture exceeds command-point limit: "+str(player_state.faction))
 	if not errors.is_empty(): finish(); return
 	if view: make_camera()
+	if case_name=="mechanics":
+		mechanics_validation=preload("res://scripts/mechanics_checks.gd").run(self)
+		if not errors.is_empty(): finish(); return
+	if case_name=="cp-accounting":
+		var owner: Dictionary=participants[0]
+		var before: int=int(_world.strategy_observation(owner.index).cp_used)
+		var probe: int=spawn("AngmarThrallMaster",owner,owner.home+Vector2(200,-200))
+		cp_validation=_world.debug_command_point_probe(probe)
+		require(cp_validation.get("ok",false),"modifier rejection changed command-point accounting")
+		_world.damage_object(probe,float(_world.get_object(probe).max_health)*2)
+		_world.advance(0.4)
+		cp_validation["before_spawn"]=before
+		cp_validation["after_death"]=int(_world.strategy_observation(owner.index).cp_used)
+		require(cp_validation.after_death==before,"test unit death did not restore command points")
+		if not errors.is_empty(): finish(); return
+	if case_name=="learning-feedback":
+		feedback_validation=preload("res://scripts/learning_feedback_checks.gd").run(self)
+		if not errors.is_empty(): finish(); return
 	var human_logger=load("res://scripts/human_training_log.gd")
 	if not require(human_logger!=null and human_logger.can_instantiate(),"human logger failed to compile"): finish(); return
 	var controller=load("res://scripts/general_strategy.gd")
@@ -347,10 +372,16 @@ func _process(delta):
 	if case_name=="sequence" and sequence_validation.is_empty(): probe_sequence()
 	if not paused:
 		training_control()
-		_world.advance(minf(delta,0.1)*speed)
+		var first_step: bool=sim_start<0
+		if first_step: sim_start=int(_world.get_frame())
+		var step: float=minf(delta,0.1)*speed
+		if sim_frames>0:
+			step=minf(0.2 if first_step else step,float(sim_start+sim_frames-int(_world.get_frame()))/5.0)
+		_world.advance(maxf(0.0,step))
 		driver.tick()
 		training_verify_purchases()
 		if case_name=="access": preload("res://scripts/model_access_checks.gd").poll(self,model_access_validation)
+		if sim_frames>0 and int(_world.get_frame())>=sim_start+sim_frames: finish(); return
 	if started<0:
 		started=Time.get_ticks_msec()
 		return
@@ -370,7 +401,7 @@ func _process(delta):
 		if not screenshot_path.is_empty() and not capturing and Time.get_ticks_msec()-started>=int(seconds*1000):
 			capturing=true
 			capture_preview()
-	elif Time.get_ticks_msec()-started>=int(seconds*1000): finish()
+	elif sim_frames<=0 and Time.get_ticks_msec()-started>=int(seconds*1000): finish()
 
 func capture_preview():
 	await RenderingServer.frame_post_draw
@@ -451,6 +482,10 @@ func finish():
 	var result={"schema":1,"ok":errors.is_empty(),"stage":stage,"case":case_name,"seed":config.get("seed",0),"model":model,"errors":errors,"fixtures":fixtures,"initial":initial,"scope":"3v3 prepared-state runtime smoke; does not certify behavior or long-match balance; middle/late phase timers compressed only in test mod; no seeded spellbook points or researched unit upgrades"}
 	if _world!=null:
 		result["frame"]=_world.get_frame()
+		result["simulation_window"]={"start":sim_start,"end":int(_world.get_frame()),"budget":sim_frames,"fixed":sim_frames>0}
+		result["mechanics_validation"]=mechanics_validation
+		result["cp_validation"]=cp_validation
+		result["feedback_validation"]=feedback_validation
 		result["fixture_cp_adjustments"]=fixture_cp_adjustments
 		if participants.size()==6:
 			result["final"]=sample()

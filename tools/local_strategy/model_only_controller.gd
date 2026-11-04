@@ -3,6 +3,7 @@ extends "res://scripts/general_strategy_legacy.gd"
 # Only observation, bounded legal-choice construction, model transport and command
 # execution. No coordinator, playbook, production policy, micro or fallback tick.
 const C = preload("res://scripts/team_ai/contracts.gd")
+const M = preload("res://scripts/team_ai/mechanics_observation.gd")
 var model_controlled: Dictionary = {}
 var reward_sensor = preload("res://scripts/team_ai/reward_sensor.gd").new()
 var closed_training_matches: Dictionary = {}
@@ -86,7 +87,7 @@ func tick() -> void:
 func options(obs: Dictionary) -> Dictionary:
 	var own: Array = C.objects(obs,"self")
 	var enemies: Array = C.objects(obs,"enemy")
-	var army: Array = own.filter(func(o): return not o.get("structure",false))
+	var army: Array = M.army(own)
 	if game.has_method("model_fixture_reserved_ids"):
 		var reserved: Array = game.model_fixture_reserved_ids()
 		army=army.filter(func(o): return int(o.id) not in reserved)
@@ -109,6 +110,11 @@ func options(obs: Dictionary) -> Dictionary:
 			for y in [0.2,0.5,0.8]:
 				candidates.append({"id":"scout_%d" % candidates.size(),"kind":"scout","units":[int(ids[0])],"target":0,"x":float(extent.extent_x)*x,"y":float(extent.extent_y)*y,"description":"Move one group to a public map coordinate to explore; available own groups 1"})
 	var buildings: Dictionary = {}
+	for role in 8:
+		var cohort: Array=army.filter(func(o): return int(o.get("category",-1))==role)
+		if cohort.is_empty() or cohort.size()==army.size(): continue
+		for enemy in enemies.slice(0,2):
+			candidates.append({"id":"attack_role_%d_%d" % [role,int(enemy.id)],"kind":"attack","units":cohort.map(func(o): return int(o.id)),"target":int(enemy.id),"x":enemy.x,"y":enemy.y,"description":"Attack a visible target with one owned unit class"})
 	for object in own:
 		if object.get("structure",false): buildings[str(object.template)]=int(buildings.get(str(object.template),0))+1
 	var summary: Dictionary = {"model_only":true,"player_index":obs.player_index,"faction":obs.faction,"money":obs.money,"cp_free":int(obs.cp_limit)-int(obs.cp_used),"army_groups":army.size(),"home_emergency":false,"home_threat_groups":enemies.filter(func(o): return not o.get("structure",false) and Vector2(o.x,o.y).distance_to(home)<1100).size(),"visible_enemy_groups":enemies.filter(func(o): return not o.get("structure",false)).size(),"own_composition":composition(army),"visible_enemy_composition":composition(enemies),"own_buildings":buildings,"human_state_features":preload("res://scripts/team_ai/human_state_context.gd").collect(obs)}
@@ -117,6 +123,10 @@ func options(obs: Dictionary) -> Dictionary:
 	summary["match_id"]=training_match_id()
 	summary["diagnostic_session"]=diagnostics.session
 	summary["decision_frame"]=int(obs.observed_frame)
+	summary["mechanics"]=M.collect(obs,home)
+	summary.mechanics["spell_points"]=summary.spell_points
+	summary["home_emergency"]=float(summary.mechanics.home_threat_value)>0
+	for candidate in candidates: M.annotate(candidate,obs)
 	return {"summary":summary,"candidates":candidates.slice(0,64),"army":army,"home":home}
 
 func request_plan(bot: Dictionary, frame: int) -> void:
@@ -132,7 +142,7 @@ func request_plan(bot: Dictionary, frame: int) -> void:
 	sequence+=1
 	last_request[bot.index]=frame
 	pending={"epoch":epoch,"sequence":sequence,"player":int(bot.index),"observed_frame":frame,"sent_ms":Time.get_ticks_msec(),"options":spec.candidates,"production_options":purchases}
-	var prompt: Array = spec.candidates.map(func(c): return {"id":c.id,"description":c.description})
+	var prompt: Array = spec.candidates.map(func(c): return {"id":c.id,"description":c.description,"mechanics":c.mechanics,"rule_refs":c.rule_refs})
 	var payload: Dictionary = {"model":"openbfme-decision-net-v0","messages":[{"role":"user","content":JSON.stringify({"observation":spec.summary,"candidates":prompt,"production_options":purchases})}]}
 	diagnostics.write("model_request",{"request":sequence,"player":bot.index,"frame":frame,"observation":spec.summary,"candidates":prompt,"production_options":purchases})
 	var error: int = http.request(http.chat_url,["Content-Type: application/json"],HTTPClient.METHOD_POST,JSON.stringify(payload))
@@ -206,6 +216,8 @@ func apply_model_command(answer: Dictionary, request: Dictionary, frame: int) ->
 			for power in game._world.get_object_powers(int(operation.producer)):
 				if str(power.name)==str(operation.template): evidence["power_before"]=int(power.get("triggers",0))
 		var result: Dictionary = game._world.strategy_model_action(int(request.player),{"id":id})
+		if result.get("ok",false) and result.has("operation"):
+			evidence.merge(result.operation,true)
 		emit_credit(request,"spend",evidence,result)
 		diagnostics.write("model_production" if operation.kind in ["build","train"] else "model_command",{"request":request.sequence,"action_id":request.get("training_spend_id",""),"player":request.player,"frame":frame,"operation":operation,"result":result,"source":"model_only"})
 		if result.get("ok",false) and operation.kind in ["build","train"] and not str(request.get("training_spend_id","")).is_empty():

@@ -75,8 +75,12 @@ def load_progress(path):
                 state.update(completed=state["completed"]+1,next_seed=state["next_seed"]+1,
                     schedule_index=state["schedule_index"]+1,last_completed_run=state["pending_run"],
                     last_reward=recovered["rounds"][-1]["reward"])
-            except (OSError,ValueError,KeyError,TypeError): pass
-            state.pop("pending_run",None)
+                state.pop("pending_run",None)
+            except (OSError,ValueError,KeyError,TypeError):
+                try:
+                    from automatic_training import resumable_evaluation
+                    resumable_evaluation(state["pending_run"],ROOT/"AI-Yeni-Model/ai-service/runtime.json")
+                except (OSError,ValueError,KeyError,TypeError): state.pop("pending_run",None)
             atomic_write(path,state)
         return state
     previous=latest_completed()
@@ -136,6 +140,9 @@ def main():
             parent=args.state.parent / "runs" if args.smoke else RUNS
             parent.mkdir(parents=True,exist_ok=True)
             output=parent / ("auto-"+datetime.now().strftime("%Y%m%d-%H%M%S-%f")+"-"+str(number))
+            pending=state.get("pending_run")
+            if pending and not args.smoke:
+                output=Path(pending)
             command=[sys.executable,str(HERE / "automatic_training.py"),"--cycles","1","--seconds",str(seconds),
                      "--stage",stage,"--case",case,"--seed",str(state["next_seed"]),"--output",str(output)]
             if state["last_completed_run"]:
@@ -143,15 +150,23 @@ def main():
                 checked_run(previous)
                 command += ["--resume",str(previous / "candidate.npz"),"--resume-spend",str(previous / "spend-candidate.npz")]
             if evaluation: command.append("--evaluate")
+            if pending and not args.smoke: command.append("--resume-evaluation")
             if args.smoke: command.append("--no-activate")
             if not args.smoke: command.append("--rotate-factions")
             state["pending_run"]=str(output)
             atomic_write(args.state,state)
             emit("running",round=number,completed=state["completed"],stage=stage,case=case,seconds=seconds,evaluation=evaluation)
             with (args.state.parent / "launcher-session.log").open("a",encoding="utf-8",buffering=1) as log:
-                process=subprocess.Popen(command,cwd=ROOT,stdout=log,stderr=subprocess.STDOUT,
-                                         creationflags=subprocess.CREATE_NO_WINDOW)
-                try: code=process.wait()
+                process=subprocess.Popen(command,cwd=ROOT,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,
+                                         text=True,encoding="utf-8",creationflags=subprocess.CREATE_NO_WINDOW)
+                try:
+                    for line in process.stdout:
+                        log.write(line)
+                        try:
+                            row=json.loads(line)
+                            if row.get("event")=="episode_phase": emit("episode_phase",phase=row["phase"],seconds=row["seconds"])
+                        except (ValueError,KeyError,TypeError): pass
+                    code=process.wait()
                 except BaseException:
                     if process.poll() is None:
                         subprocess.run(["taskkill","/PID",str(process.pid),"/T","/F"],stdout=log,stderr=subprocess.STDOUT,creationflags=subprocess.CREATE_NO_WINDOW)

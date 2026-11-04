@@ -21,6 +21,6 @@ class NormalMatchCapture:
         key = (str(observation["match_id"]), player)
         if frame - self.last.get(key, -1000000) < 150: return None
         self.last[key] = frame
-        return {"schema":"normal-trajectory-v1", "match_id":key[0], "player":player, "frame":frame, "faction":observation.get("faction"),
+        return {"schema":"normal-trajectory-v1", "feature_encoding":"rts-mechanics-v1+bfme-public-rules-v2+native-queue-v1", "game_rules_sha256":observation.get("public_rules",{}).get("sha256"), "match_id":key[0], "player":player, "frame":frame, "faction":observation.get("faction"),
                 "selection":"greedy", "tactical":trace(observation,candidates,selected,features),
                 "spend":trace(observation,purchases,spend_id,spend_features)}

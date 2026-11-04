@@ -29,15 +29,23 @@ def main():
     cli.add_argument("--output",type=Path,required=True)
     cli.add_argument("--rotwk",type=Path,default=Path("D:/Games/RotWK"))
     cli.add_argument("--bfme2",type=Path,default=Path("D:/Games/BFME2"))
+    cli.add_argument("--full",action="store_true",help="Retain all object fields/modules and locomotor rules")
+    cli.add_argument("--mod",type=Path,help="Overlay the actual game's loose mod files")
     args=cli.parse_args()
     if args.output.exists(): raise ValueError("Use a new catalogue directory")
     files=oo.mount(args.rotwk,args.bfme2)
+    if args.mod:
+        for path in args.mod.rglob('*'):
+            if path.is_file(): files[oo.normalize(path.relative_to(args.mod).as_posix())]=(path,0,path.stat().st_size)
     object_files=oo.object_files(files,oo.legend_entry(files),False)
     fixed=["default/gamedata","gamedata","playertemplate","weapon","armor","commandset","commandbutton",
            "default/upgrade","upgrade","default/science","science","default/specialpower","specialpower",
            "attributemodifier","experiencelevels"]
     roots=[oo.normalize("data/ini/"+p+".ini") for p in fixed]+object_files
     roots=list(dict.fromkeys(roots))
+    if args.full:
+        roots += [oo.normalize('data/ini/'+name+'.ini') for name in ['locomotor','default/skirmishaidata'] if oo.normalize('data/ini/'+name+'.ini') in files]
+        KINDS.add('Locomotor')
     expanded=[]; errors=[]; macros={}; macro_sources={}; conflicts=set(); source_paths=set()
     priors=oo.Priors()
     for key in roots:
@@ -71,11 +79,12 @@ def main():
     def filtered(node,is_object=False):
         fields=[]
         for f in node["fields"]:
-            if is_object and f["key"] not in OBJECT_FIELDS: continue
+            if is_object and not args.full and f["key"] not in OBJECT_FIELDS: continue
             n=number(f["raw"])
-            fields.append({**f,**({"numeric":n} if n else {})})
+            expanded_raw=re.sub(r'\b[A-Za-z_]\w*\b',lambda m: str(number(m[0])["value"]) if number(m[0]) else m[0],f['raw']) if args.full else f['raw']
+            fields.append({**f,"expanded_raw":expanded_raw,**({"numeric":n} if n else {})})
         return {"header":node["header"],"source":node["source"],"fields":fields,
-                "blocks":[filtered(c) for c in node["blocks"] if not is_object or retain(c)]}
+                "blocks":[filtered(c) for c in node["blocks"] if args.full or not is_object or retain(c)]}
 
     definitions=defaultdict(list); failures=[]
     for key,items in expanded:
@@ -89,8 +98,8 @@ def main():
             if openers[i]:
                 node={"header":" ".join(it.tokens),"source":{"file":it.file,"line":it.line},"fields":[],"blocks":[]}
                 if depth==0:
-                    if it.tokens[0] in KINDS and len(it.tokens)>1:
-                        definitions[(it.tokens[0],it.tokens[1])].append(node)
+                    if it.tokens[0] in KINDS and (len(it.tokens)>1 or args.full):
+                        definitions[(it.tokens[0],it.tokens[1] if len(it.tokens)>1 else '$global')].append(node)
                 elif stack: stack[-1]["blocks"].append(node)
                 stack.append(node)
             elif stack:
@@ -133,6 +142,7 @@ def main():
         archive,_,_=files[name]
         sources.append({"file":name,"archive":str(archive),"sha256":hashlib.sha256(oo.read_file(files,name)).hexdigest()})
     inventory={"schema":1,"catalogue_sha256":hashlib.sha256(path.read_bytes()).hexdigest(),"source_files":sources,
+               "full_object_rules":args.full,"mod_overlay":str(args.mod.resolve()) if args.mod else None,
                "counts":{"objects":len(objects),**{k:len(v) for k,v in facts["tables"].items()}},"faction_counts":{k:len(v["declared_templates"]) for k,v in cards.items()},
                "structural_failures":failures,"duplicate_definitions":duplicates,"conflicting_macros":sorted(conflicts)}
     (args.output/"inventory.json").write_text(json.dumps(inventory,ensure_ascii=False,indent=2),encoding="utf-8")

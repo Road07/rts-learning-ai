@@ -181,6 +181,12 @@ sealed class TrainingWindow : Form {
                 AddLog("Tur tamamlandı. "+(verify ? "Kontrol modeli ayrı kaydedildi" : "Model oyuna aktarıldı")+"; ödül "+reward.ToString("+0.000;-0.000;0.000")+".");
                 return;
             }
+            if (kind=="episode_phase") {
+                string phase=Convert.ToString(row["phase"]);
+                string message=phase.StartsWith("eval-baseline") ? "Karşılaştırma 1/2 • önceki model" : phase.StartsWith("eval-candidate") ? "Karşılaştırma 2/2 • yeni model" : "Eğitim • deneyim toplanıyor";
+                status.Text=message+"\nBu aşama bitince kayıt alınacak.";
+                AddLog(message+". Seçilen süre her aşama için ayrı uygulanır.");
+            }
             if (kind=="error") { status.Text="Eğitim durdu • hata kaydedildi"; AddLog(Convert.ToString(row["message"])); }
             UpdateDetails();
         } catch { AddLog(line); }
@@ -189,7 +195,7 @@ sealed class TrainingWindow : Form {
     void StopTraining() {
         if (!running) return;
         requestedStop=true; status.Text="Eğitim durduruluyor…";
-        AddLog("Bu tur kesiliyor. Tamamlanan turlar korunacak.");
+        AddLog("Bu aşama kesiliyor. Tamamlanmış eğitimden sonraki karşılaştırma yeniden açılışta devam eder.");
         if (job!=null) { job.Dispose(); job=null; }
     }
     void Finished(int code) {

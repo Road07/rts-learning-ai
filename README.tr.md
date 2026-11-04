@@ -43,6 +43,18 @@ aktör/hedef/zaman ilişkisi kesin nedensellik değildir.
 4. Tam maç stratejisi ve uzun vadeli sonuçlardan öğrenmeyi geliştirmek.
 5. Ortak RTS çekirdeğini oyuna özel bağlantılardan ayırmak.
 
+## Son altyapı güncellemeleri
+
+- Mekanik gözlem/eylem arayüzü ve kurulu oyunun kamuya açık sayısal kurallarını kullanan girdiler.
+- Ekonomi/üretim ölçümleri; eş fraksiyon, rakip ve oyun karesiyle önceki/yeni checkpoint karşılaştırması.
+- Gerçek birim ve araştırma kuyruğu başlama/iptal olayları; gözlenen üretim ilerlemesiyle sınırlı karar geri bildirimi.
+- Sürümlenmiş `action-credit-v3` ödülü; eski politikalar ve yedi fraksiyonun ağırlıkları korunur.
+- Kesilen karşılaştırmadan devam, aşama bildirimi ve atomik checkpoint aktarımı.
+
+Bunlar öğrenmeyi ölçmek için altyapıdır. Meta bilgisi, güçlü strateji, rekabetçilik veya sürekli gelişme henüz doğrulanmış değildir. Oyun tanımlarını girdiye eklemek, modelin bunları öğrendiği anlamına gelmez. Kısa saha kontrolleri gerçek maç başarısının yerine geçmez.
+
+[İlerleme planı / Roadmap](docs/ROADMAP.md) · [Güncel ödül kapsamı](tools/local_strategy/training/LEARNING-FEEDBACK-V3.md)
+
 ## Kaynakların kullanımı
 
 Bu bir araştırma kaynak anlık görüntüsüdür. Yerel klasör varsayımları,

@@ -80,6 +80,10 @@ def main():
     shutil.copy2(HERE / "training/NORMAL-MATCH-LEARNING.md", dest / "NORMAL-MATCH-LEARNING.md")
     shutil.copy2(HERE / "training/FACTION-LEARNING.md", dest / "FACTION-LEARNING.md")
     shutil.copy2(HERE / "training/DECISION-REWARDS.md", dest / "DECISION-REWARDS.md")
+    shutil.copy2(HERE / "training/ECONOMY-EVALUATION.md", dest / "ECONOMY-EVALUATION.md")
+    shutil.copy2(HERE / "training/GAME-RULES.md", dest / "GAME-RULES.md")
+    shutil.copy2(HERE / "training/LEARNING-FEEDBACK-V2.md", dest / "LEARNING-FEEDBACK-V2.md")
+    shutil.copy2(HERE / "training/LEARNING-FEEDBACK-V3.md", dest / "LEARNING-FEEDBACK-V3.md")
     for name in ["OpenBFME.exe", "OpenBFME.console.exe"]:
         if not (dest / name).exists(): shutil.copy2(ROOT / name, dest / name)
     shutil.copy2(ROOT / "ai-mod-source/godot/bin/openbfme.windows.template_debug.x86_64.dll", dest / "openbfme.windows.template_debug.x86_64.dll")
@@ -92,10 +96,21 @@ def main():
     shutil.copy2(HERE / "service/episode_policy.py", service / "episode_policy.py")
     shutil.copy2(HERE / "service/normal_match_capture.py", service / "normal_match_capture.py")
     shutil.copy2(HERE / "service/spend_policy.py", service / "spend_policy.py")
+    shutil.copy2(HERE / "service/mechanics_features.py", service / "mechanics_features.py")
+    shutil.copy2(HERE / "service/public_game_rules.py", service / "public_game_rules.py")
+    game_rules=ROOT / "AI-Egitim/game-rules-v2/game-rules.json"
+    rules_hash=hashlib.sha256(game_rules.read_bytes()).hexdigest()
+    rules_file=service / "game-rules" / (rules_hash[:20]+".json")
+    rules_file.parent.mkdir(exist_ok=True)
+    shutil.copy2(game_rules,rules_file)
+    shutil.copy2(HERE / "service/economy_evaluation.py", service / "economy_evaluation.py")
     shutil.copy2(HERE / "service/reward_policy.py",service / "reward_policy.py")
     shutil.copy2(HERE / "service/action_credit.py",service / "action_credit.py")
-    reward=HERE / "knowledge/reward_v3.json"
-    shutil.copy2(reward,service / "reward-tuning.json")
+    reward=HERE / "knowledge/reward_action_credit_v3.json"
+    reward_hash=hashlib.sha256(reward.read_bytes()).hexdigest()
+    reward_file=service / "reward-policies" / (reward_hash[:20]+".json")
+    reward_file.parent.mkdir(exist_ok=True)
+    shutil.copy2(reward,reward_file)
     shutil.copy2(HERE / "service/fandom_policy.py", service / "fandom_policy.py")
     shutil.copy2(HERE / "service/sequence_policy.py", service / "sequence_policy.py")
     shutil.copy2(HERE / "service/match_feedback.py", service / "match_feedback.py")
@@ -132,10 +147,11 @@ def main():
     load_spend_model(spend).save(service / "spend-network.npz")
     config = {"model": MODEL, "weights": str(service / "network.npz"), "sha256": hashlib.sha256(weights.read_bytes()).hexdigest(),
               "strict_model_only":True,"spend_encoding":ENCODING,"spend_weights":str(service / "spend-network.npz"),"spend_sha256":hashlib.sha256((service / "spend-network.npz").read_bytes()).hexdigest(),
-              "reward_config":str(service / "reward-tuning.json"),"reward_sha256":hashlib.sha256(reward.read_bytes()).hexdigest(),
+              "reward_config":str(reward_file),"reward_sha256":reward_hash,
               "production_weights":str(service / "production-network.npz"),"production_sha256":hashlib.sha256(production.read_bytes()).hexdigest(),"production_mode":"shadow",
               "youtube_lessons":str(service / "youtube-lessons.json"),"youtube_sha256":hashlib.sha256(youtube.read_bytes()).hexdigest(),
               "mechanics":str(service / "mechanics-runtime.json"),"mechanics_sha256":hashlib.sha256(mechanics.read_bytes()).hexdigest(),
+              "game_rules":str(rules_file),"game_rules_sha256":rules_hash,
               "human_state_weights":str(service / "human-state-network.npz"),"human_state_sha256":hashlib.sha256(human_weights.read_bytes()).hexdigest(),"human_state_mode":"shadow",
               "knowledge": str(service / "fandom_v1.json"), "knowledge_sha256": hashlib.sha256(knowledge.read_bytes()).hexdigest(),
               "sequence_weights":str(service / "sequence-network.npz"),"sequence_sha256":hashlib.sha256(sequence_weights.read_bytes()).hexdigest(),

@@ -9,12 +9,12 @@ from pathlib import Path
 import sys
 import uuid
 import numpy as np
-from decision_net import DecisionNet, features
+from decision_net import DecisionNet, features, load_tactical_model
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[3]
 sys.path.insert(0, str(HERE.parent / "service"))
-from spend_policy import spend_features, WAIT, ENCODING
+from spend_policy import spend_features, WAIT, ENCODING, load_spend_model
 
 
 def read(path):
@@ -44,7 +44,7 @@ def publication_lock(folder):
 
 
 def validate_network(path, inputs):
-    model = DecisionNet.load(path)
+    model = load_tactical_model(path) if inputs==len(features({}, {"id":"none"})) else load_spend_model(path)
     expected = DecisionNet(inputs).weights
     if set(model.weights) != set(expected): raise ValueError("Model katmanları uyumsuz")
     for key, value in model.weights.items():

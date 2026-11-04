@@ -3,13 +3,14 @@ import numpy as np
 from decision_net import features, bag, magnitude
 
 ENCODING = "spend-v2"
-EXTRA_KINDS = ("hero","research","science","power","enter","exit","stance","formation","cancel","stop")
+LEGACY_KINDS = ("hero","research","science","power","enter","exit","stance","formation","cancel","stop")
+EXTRA_KINDS = LEGACY_KINDS + ("wall",)
 WAIT = {"id":"none", "kind":"wait", "cost":0}
 
 
-def spend_features(observation, candidate):
+def spend_features(observation, candidate, include_mechanics=True, include_rules=True, include_queue=True):
     # Same fog-filtered context as the tactical scorer, with a separate action head.
-    context = features(observation, {"id":"none"})[:-11].tolist()
+    context = features(observation, {"id":"none"},include_mechanics=False)[:-11].tolist()
     kind = candidate["kind"]
     cost = float(candidate.get("cost",0))
     money = max(1.0,float(observation.get("money",0)))
@@ -20,7 +21,7 @@ def spend_features(observation, candidate):
     context += [float(candidate.get("economy",False)), magnitude(cost,5000),
         min(3.0,cost/money), float(candidate.get("farm_share",0)), magnitude(own.get(template,0),10)]
     context += bag({template:1}) if template else [0.0]*16
-    context += [float(kind==k) for k in EXTRA_KINDS]
+    context += [float(kind==k) for k in LEGACY_KINDS]
     context += [float(candidate.get("source_health",1)),float(candidate.get("target_health",1)),
         magnitude(observation.get("spell_points",0),25),magnitude(candidate.get("points_cost",0),25),
         float(candidate.get("needs_position",False)),float(candidate.get("reviving",False))]
@@ -30,6 +31,16 @@ def spend_features(observation, candidate):
     context += [float(candidate.get("source_hero",False)),float(candidate.get("target_hero",False))]
     context += [float(int(candidate.get("source_role",-1))==r) for r in range(4)]
     context += [float(candidate.get("source_contained",False)),float(candidate.get("target_structure",False))]
+    if include_mechanics:
+        from mechanics_features import state_features,action_features
+        context += state_features(observation)+action_features(candidate)+[float(kind=="wall")]
+        if include_rules:
+            from public_game_rules import spend_rule_features
+            context += spend_rule_features(observation,candidate)
+            if include_queue:
+                from mechanics_features import scaled
+                context += [float(candidate.get("queue_verified",False))]
+                context += [scaled(candidate.get(k,0),s,k) for k,s in (("queue_progress",1.),("queue_work_seconds",180.),("queue_paid_cost",5000.),("queue_remaining",30.))]
     return np.asarray(context,dtype=np.float32)
 
 
@@ -39,7 +50,10 @@ def load_spend_model(path):
     inputs=len(spend_features({},WAIT))
     old=model.weights["w0"].shape[0]
     if old==inputs: return model
-    if old not in (inputs-16,inputs-32): raise ValueError("Unknown spend checkpoint dimensions")
+    legacy=len(spend_features({},WAIT,include_mechanics=False))
+    mechanics=len(spend_features({},WAIT,include_rules=False))
+    public=len(spend_features({},WAIT,include_queue=False))
+    if old not in (legacy,legacy-16,legacy-32,mechanics,public): raise ValueError("Unknown spend checkpoint dimensions")
     # Add explicit command-kind/state channels. Zero rows preserve every old score;
     # this is a feature migration, not evidence that the new actions were learned.
     for bank in [model]+list(model.factions.values()):
