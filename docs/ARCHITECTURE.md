@@ -1,5 +1,13 @@
 # Architecture / Mimari
 
+> Current path distinction (2026-11-08): gameplay still uses the NumPy banks.
+> Shared entity/GRU and recurrent PPO are separate work; the Gym MaskablePPO
+> economy experiment uses a separate stock MLP and never activates it in-game.
+> See [experiment status and limits](EXPERIMENTS.md).
+>
+> Güncel ayrım: oyun modeli NumPy bankalarıdır. Ortak entity/GRU ve recurrent
+> PPO ayrı çalışmalardır; Gym ekonomi deneyinin MLP'si oyuna aktarılmaz.
+
 ## English
 
 The current implementation uses two small NumPy scoring networks: one for

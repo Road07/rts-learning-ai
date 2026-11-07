@@ -98,8 +98,10 @@ def main():
     parser.add_argument("--gate",type=Path)
     parser.add_argument("--smoke",action="store_true")
     parser.add_argument("--minutes",type=int,choices=[3,5,15,30],default=3,
-                        help="Wall-clock duration of each training rollout")
+                        help="Simulation duration of each headless training rollout")
+    parser.add_argument("--time-scale",type=float,default=10.)
     args=parser.parse_args()
+    if not 0.25<=args.time_scale<=100:parser.error("time-scale: 0.25..100")
     # The GUI assigns this process to its private kill-on-close Job before opening
     # the gate. No child process can escape ownership during launcher startup.
     if args.gate:
@@ -117,6 +119,10 @@ def main():
     except OSError: raise RuntimeError("Otomatik eğitim zaten açık")
     try:
         state=load_progress(args.state)
+        if not args.smoke:
+            sys.path.insert(0,str(HERE.parent))
+            from engine_update import start_background
+            start_background()
         if not args.smoke:
             game_config=read(ROOT / "AI-Yeni-Model/ai-service/runtime.json")
             published=game_config.get("model_activation",{})
@@ -144,7 +150,7 @@ def main():
             if pending and not args.smoke:
                 output=Path(pending)
             command=[sys.executable,str(HERE / "automatic_training.py"),"--cycles","1","--seconds",str(seconds),
-                     "--stage",stage,"--case",case,"--seed",str(state["next_seed"]),"--output",str(output)]
+                     "--stage",stage,"--case",case,"--seed",str(state["next_seed"]),"--output",str(output),"--headless-training","--time-scale",str(args.time_scale)]
             if state["last_completed_run"]:
                 previous=Path(state["last_completed_run"])
                 checked_run(previous)
@@ -155,7 +161,7 @@ def main():
             if not args.smoke: command.append("--rotate-factions")
             state["pending_run"]=str(output)
             atomic_write(args.state,state)
-            emit("running",round=number,completed=state["completed"],stage=stage,case=case,seconds=seconds,evaluation=evaluation)
+            emit("running",round=number,completed=state["completed"],stage=stage,case=case,seconds=seconds,evaluation=evaluation,headless=True,time_scale=args.time_scale,duration_basis="simulation")
             with (args.state.parent / "launcher-session.log").open("a",encoding="utf-8",buffering=1) as log:
                 process=subprocess.Popen(command,cwd=ROOT,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,
                                          text=True,encoding="utf-8",creationflags=subprocess.CREATE_NO_WINDOW)

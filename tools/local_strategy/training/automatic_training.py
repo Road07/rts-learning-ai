@@ -26,6 +26,7 @@ from spend_policy import spend_features, load_spend_model, ENCODING
 from reward_policy import calculate_episode
 from action_credit import calculate as calculate_credit, key as credit_key, credit_version
 from economy_evaluation import evaluate as evaluate_economy, compare as compare_economy
+from feedback_audit import build as audit_feedback
 
 
 def read_json(path):
@@ -86,6 +87,7 @@ def episode_data(folder, stage, arena_logs):
     accepted = set()
     orders = 0
     credit_events=[]
+    arena_logs=Path(report.get("telemetry_directory",arena_logs))
     paths = sorted(arena_logs.glob(report["diagnostic_session"] + "-*.jsonl"))
     if not paths: raise RuntimeError("Missing exact game session telemetry")
     telemetry = folder / "telemetry"
@@ -111,6 +113,7 @@ def episode_data(folder, stage, arena_logs):
         action["intent_accepted"] = action["action_id"] in accepted
     for action in spend_actions: action["response_received"]=action["action_id"] in responses
     breakdown=None
+    feedback_report=None
     economy_report={"schema":"economy-production-eval-v1","status":"missing_telemetry","players":[]}
     if report["training"]["reward_version"]=="bfme-outcome-reward-v3":
         config_record=next(r for r in records if r["event"]=="reward_config_loaded")
@@ -123,6 +126,7 @@ def episode_data(folder, stage, arena_logs):
         breakdown=calculate_episode(read_json(reward_path),rows,learners)
         reward=breakdown["total"]
         credit,credit_metrics=calculate_credit(read_json(reward_path),rows,credit_events)
+        feedback_report=audit_feedback(learners,{'tactical':actions,'spend':spend_actions},credit,credit_events)
         policy_version=credit_version(read_json(reward_path))
         for head,traces in [("tactical",actions),("spend",spend_actions)]:
             for action in traces:
@@ -143,9 +147,10 @@ def episode_data(folder, stage, arena_logs):
         reward=breakdown["total"]
     else: reward=survival_reward(report)
     write_json(folder / "economy-evaluation.json",economy_report)
+    write_json(folder / "feedback-audit.json",feedback_report)
     write_json(folder / "experience.json", {"schema": 1, "fixture": True,
         "reward_version": report["training"]["reward_version"], "reward": reward,"reward_breakdown":breakdown,"economy_evaluation":economy_report,
-        "spend_actions":spend_actions,"purchase_submissions":purchases,
+        "feedback_audit":feedback_report,"spend_actions":spend_actions,"purchase_submissions":purchases,
         "command_submissions":commands,
         "purchase_receipts":report.get("training_purchase_receipts",[]),
         "purchase_pending":report.get("training_purchase_pending",0),
@@ -199,10 +204,18 @@ def update(model, actions, reward, baseline, learning_rate, encoder=features):
 
 def episode_environment(args, config, seed, mode, roster_seed=None):
     config=dict(config)
+    for key in ('persistent_http','compact_wire','feature_cache','batch_wire'):
+        if hasattr(args,key):config[key]=getattr(args,key)
+    if hasattr(args,'engine_package'):config['arena_engine_directory']=args.engine_package
+    if getattr(args,"inference_profile",False):
+        config["inference_profile"]=True
+        config["profile_hash_stride"]=getattr(args,"hash_stride",1)
     if args.rotate_factions:
         anchor=args.seed if roster_seed is None else roster_seed
         config["arena_factions"]=[FACTIONS[(anchor+i)%len(FACTIONS)] for i in range(6)]
-    if mode=="evaluate": config["arena_sim_frames"]=int(round(args.seconds*20))
+    if getattr(args,"headless_training",False):
+        config.update(arena_headless_training=True,arena_time_scale=args.time_scale,arena_sim_frames=int(round(args.seconds*5)),arena_decision_stride=getattr(args,"decision_stride",5),arena_fast_poll=getattr(args,"headless_fast_poll",False))
+    elif mode=="evaluate": config["arena_sim_frames"]=int(round(args.seconds*20))
     else: config.pop("arena_sim_frames",None)
     return config
 
@@ -289,7 +302,7 @@ def evaluate_pair(args,run,report,baseline,candidate,spend_baseline,spend_candid
         episodes.append((name,reward))
     report["evaluation"]={"baseline_reward":episodes[0][1],"candidate_reward":episodes[1][1],"difference":episodes[1][1]-episodes[0][1],"pairs":1,"sufficient_to_claim_strength":False}
     comparison=compare_economy(read_json(run/episodes[0][0]/"economy-evaluation.json"),read_json(run/episodes[1][0]/"economy-evaluation.json"))
-    comparison.update(stage=args.stage,case=args.case,seed=seed,learner_slots=[0,1,2],roster_seed=roster_seed,simulation_frames=int(round(args.seconds*20)),baseline_sha256=sha(baseline),candidate_sha256=sha(candidate),baseline_spend_sha256=sha(spend_baseline),candidate_spend_sha256=sha(spend_candidate),opponent_sha256=sha(baseline),opponent_spend_sha256=sha(spend_baseline))
+    comparison.update(stage=args.stage,case=args.case,seed=seed,learner_slots=[0,1,2],roster_seed=roster_seed,simulation_frames=int(round(args.seconds*(5 if getattr(args,"headless_training",False) else 20))),baseline_sha256=sha(baseline),candidate_sha256=sha(candidate),baseline_spend_sha256=sha(spend_baseline),candidate_spend_sha256=sha(spend_candidate),opponent_sha256=sha(baseline),opponent_spend_sha256=sha(spend_baseline))
     report["evaluation"]["economy_production"]=comparison
     write_json(run/"economy-comparison.json",comparison)
 
@@ -310,10 +323,28 @@ def main():
     parser.add_argument("--no-activate", action="store_true", help="Keep this verification run separate from the playable model")
     parser.add_argument("--rotate-factions", action="store_true", help="Rotate all seven factions through learner slots")
     parser.add_argument("--resume-evaluation",action="store_true",help="Resume a committed training round without applying another gradient update")
+    parser.add_argument("--engine-package",help="Pin one validated engine package for the whole training/evaluation pair")
+    parser.add_argument("--headless-training",action="store_true",help="Private headless fixed-step rollout; --seconds is simulation time")
+    parser.add_argument("--headless-fast-poll",action="store_true",help="Remove Godot headless idle frame delay; keep native logic step unchanged")
+    parser.add_argument("--decision-stride",type=int,choices=[5,10,15,20],default=5,help="Global decision scheduler frames; default unchanged")
+    parser.add_argument("--time-scale",type=float,default=10.,help="Headless target wall-clock speed")
     args = parser.parse_args()
     if not 1 <= args.cycles <= 100 or not 1 <= args.seconds <= 1800 or not 0 < args.learning_rate <= .05:
         parser.error("cycles 1..100, seconds 1..1800, learning-rate (0,.05]")
+    if not np.isfinite(args.time_scale) or not .25<=args.time_scale<=100:parser.error("time-scale: 0.25..100")
     args.config = args.config.resolve()
+    benchmark_suite=read_json(args.config).get("benchmark_suite")
+    if benchmark_suite:
+        heldout={int(g["seed"]) for g in read_json(Path(benchmark_suite)/"suite.json")["plan"]}
+        used=set(range(args.seed,args.seed+args.cycles))
+        if args.evaluate: used.add(args.seed+100000)
+        if heldout & used: parser.error("Benchmark seeds are held out; choose a different training seed")
+
+    if args.engine_package is None:
+        sys.path.insert(0,str(HERE.parent))
+        from engine_update import active
+        engine=active()
+        args.engine_package=engine['directory'] if engine else ''
     lock_path = ROOT / "AI-Test-Sahasi/training.lock"
     lock = lock_path.open("a+b")
     lock.seek(0)
@@ -329,7 +360,11 @@ def main():
         try:
             report=resumable_evaluation(run,args.config)
             args.no_activate=args.no_activate or report["settings"].get("no_activate",False)
-            for field in ["cycles","seconds","stage","case","seed","rotate_factions"]:
+            args.headless_training=bool(report["settings"].get("headless_training",False))
+            args.decision_stride=int(report["settings"].get("decision_stride",5))
+            args.headless_fast_poll=bool(report["settings"].get("headless_fast_poll",False))
+            args.time_scale=float(report["settings"].get("time_scale",10.))
+            for field in ["cycles","seconds","stage","case","seed","rotate_factions","engine_package"]:
                 setattr(args,field,report["settings"].get(field,getattr(args,field)))
             evaluate_pair(args,run,report,run/"baseline.npz",run/"candidate.npz",run/"spend-baseline.npz",run/"spend-candidate.npz")
             report.update(status="complete",candidate_sha256=sha(run/"candidate.npz"),live_model_unchanged=True)
@@ -396,6 +431,17 @@ def main():
             reward_detail=read_json(run / ("train-%03d" % i) / "experience.json").get("reward_breakdown")
             report["rounds"].append({"reward":reward,"reward_breakdown":reward_detail,"accepted_intents":accepted,"samples":len(actions),"update":result,"checkpoint_sha256":sha(checkpoint),"spend_samples":len(spend_actions),"spend_update":spend_result,"spend_sha256":sha(spend_candidate)})
             report["rounds"][-1]["economy_evaluation"]=read_json(run / ("train-%03d" % i) / "economy-evaluation.json")
+            report["rounds"][-1]["feedback_audit"]=read_json(run / ("train-%03d" % i) / "feedback-audit.json")
+            # Queue immutable checkpoints for held-out evaluation; never start long
+            # benchmark matches inside training, and never use these metrics as reward.
+            benchmark_suite=read_json(args.config).get("benchmark_suite")
+            if benchmark_suite and not args.no_activate:
+                try:
+                    from checkpoint_registry import add as register_benchmark
+                    report["rounds"][-1]["benchmark_registration"]=register_benchmark(benchmark_suite,args.config,run.name+"/"+str(i),weights=checkpoint,spend=run/("spend-checkpoint-%03d.npz" % i))
+                except (OSError,ValueError,KeyError,ImportError) as error:
+                    report["rounds"][-1]["benchmark_registration_error"]=str(error)
+
             write_json(run / "report.json", report)
             print(json.dumps(report["rounds"][-1]), flush=True)
         if args.evaluate:

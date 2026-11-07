@@ -84,6 +84,7 @@ def main():
     shutil.copy2(HERE / "training/GAME-RULES.md", dest / "GAME-RULES.md")
     shutil.copy2(HERE / "training/LEARNING-FEEDBACK-V2.md", dest / "LEARNING-FEEDBACK-V2.md")
     shutil.copy2(HERE / "training/LEARNING-FEEDBACK-V3.md", dest / "LEARNING-FEEDBACK-V3.md")
+    shutil.copy2(HERE / "training/BC-DEMONSTRATIONS.md", dest / "BC-DEMONSTRATIONS.md")
     for name in ["OpenBFME.exe", "OpenBFME.console.exe"]:
         if not (dest / name).exists(): shutil.copy2(ROOT / name, dest / name)
     shutil.copy2(ROOT / "ai-mod-source/godot/bin/openbfme.windows.template_debug.x86_64.dll", dest / "openbfme.windows.template_debug.x86_64.dll")
@@ -106,6 +107,10 @@ def main():
     shutil.copy2(HERE / "service/economy_evaluation.py", service / "economy_evaluation.py")
     shutil.copy2(HERE / "service/reward_policy.py",service / "reward_policy.py")
     shutil.copy2(HERE / "service/action_credit.py",service / "action_credit.py")
+    shutil.copy2(HERE / "service/feedback_audit.py",service / "feedback_audit.py")
+    shutil.copy2(HERE / "service/demonstrations.py",service / "demonstrations.py")
+    for name in ('feature_cache.py','decision_protocol.py'):
+        shutil.copy2(HERE / 'service' / name,service / name)
     reward=HERE / "knowledge/reward_action_credit_v3.json"
     reward_hash=hashlib.sha256(reward.read_bytes()).hexdigest()
     reward_file=service / "reward-policies" / (reward_hash[:20]+".json")
@@ -145,7 +150,7 @@ def main():
     sys.path.insert(0,str(HERE / "service"))
     from spend_policy import load_spend_model, ENCODING
     load_spend_model(spend).save(service / "spend-network.npz")
-    config = {"model": MODEL, "weights": str(service / "network.npz"), "sha256": hashlib.sha256(weights.read_bytes()).hexdigest(),
+    config = {"auto_engine_update":True,"engine_update_script":str(HERE/'engine_update.py'),"model": MODEL, "weights": str(service / "network.npz"), "sha256": hashlib.sha256(weights.read_bytes()).hexdigest(),
               "strict_model_only":True,"spend_encoding":ENCODING,"spend_weights":str(service / "spend-network.npz"),"spend_sha256":hashlib.sha256((service / "spend-network.npz").read_bytes()).hexdigest(),
               "reward_config":str(reward_file),"reward_sha256":reward_hash,
               "production_weights":str(service / "production-network.npz"),"production_sha256":hashlib.sha256(production.read_bytes()).hexdigest(),"production_mode":"shadow",
@@ -163,12 +168,15 @@ def main():
     with publication_lock(service):
         runtime_path = service / "runtime.json"
         previous = read_runtime(runtime_path) if runtime_path.exists() else {}
+        for key in ('persistent_http','compact_wire','feature_cache','batch_wire'):
+            config[key]=previous.get(key,True)
         if previous.get("model_activation"):
             for path_key, hash_key in [("weights","sha256"),("spend_weights","spend_sha256")]:
                 if hashlib.sha256(Path(previous[path_key]).read_bytes()).hexdigest() != previous[hash_key]:
                     raise ValueError("Active trained model is damaged; package update cannot replace it silently")
                 config[path_key], config[hash_key] = previous[path_key], previous[hash_key]
             config["model_activation"] = previous["model_activation"]
+        if previous.get("benchmark_suite"): config["benchmark_suite"]=previous["benchmark_suite"]
         atomic_json(runtime_path, config)
     pythonw = Path(sys.executable).with_name("pythonw.exe")
     launcher = '@echo off\nsetlocal\nset "AI_PYTHONW=' + str(pythonw) + '"\n'

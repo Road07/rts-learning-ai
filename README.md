@@ -51,8 +51,10 @@ not affiliated with or endorsed by the original game publishers.
 
 ## Güncel çalışma / Current work
 
-Sürümlenmiş karar geri bildirimi, gerçek üretim/araştırma olay kayıtları ve eş koşullu model değerlendirmesi geliştiriliyor. Öğrenme ve rekabetçilik henüz kanıtlanmadı.
+Gymnasium arayüzü, başsız paralel maçlar ve ayrı bir MaskablePPO ekonomi deneyi eklendi. Bölüm ödülleri ve ödül bileşenleri TensorBoard'a yazılıyor. Hafif ortam işçileri, doğrulanan paket önbelleği ve bellek koruması üzerinde çalışılıyor. Bu deney mevcut oyun modelini değiştirmez; güçlü oynanış veya sürekli öğrenme başarısı henüz kanıtlanmadı.
 
-Current work focuses on versioned decision feedback, native production/research receipts and matched checkpoint evaluation. Improved playing strength has not been demonstrated.
+Recent work adds a Gymnasium interface, headless parallel matches and a separate MaskablePPO economy experiment with episode and reward-component logging. Lightweight environment workers, verified package caching and memory guards support local experiments. This experiment does not replace the gameplay model; stronger play and sustained learning have not been demonstrated.
+
+[Deneyler, ölçümler ve sınırlar / Experiments, measurements and limits](docs/EXPERIMENTS.md)
 
 [İlerleme planı / Roadmap](docs/ROADMAP.md) · [Mimari / Architecture](docs/ARCHITECTURE.md)

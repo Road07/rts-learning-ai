@@ -1,6 +1,7 @@
 """Shared model features for purchases and explicitly selected gameplay commands."""
 import numpy as np
 from decision_net import features, bag, magnitude
+from feature_cache import cached
 
 ENCODING = "spend-v2"
 LEGACY_KINDS = ("hero","research","science","power","enter","exit","stance","formation","cancel","stop")
@@ -10,7 +11,7 @@ WAIT = {"id":"none", "kind":"wait", "cost":0}
 
 def spend_features(observation, candidate, include_mechanics=True, include_rules=True, include_queue=True):
     # Same fog-filtered context as the tactical scorer, with a separate action head.
-    context = features(observation, {"id":"none"},include_mechanics=False)[:-11].tolist()
+    context = cached('spend_base',observation,lambda:features(observation, {"id":"none"},include_mechanics=False)[:-11].tolist())
     kind = candidate["kind"]
     cost = float(candidate.get("cost",0))
     money = max(1.0,float(observation.get("money",0)))

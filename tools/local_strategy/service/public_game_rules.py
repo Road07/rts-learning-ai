@@ -4,6 +4,7 @@ import hashlib
 import json
 import math
 from pathlib import Path
+from feature_cache import cached
 
 ENCODING='bfme-public-rules-v2'
 STAT_SCALES={'cost':5000.,'build_time':180.,'cp':100.,'max_health':10000.,'member_health':10000.,
@@ -33,6 +34,9 @@ def encode_card(card):
 
 
 def context_features(observation):
+    return cached('public_rule_context',observation,lambda:_context_features(observation))
+
+def _context_features(observation):
     context=observation.get('public_rules',{})
     return encode_card(context.get('own',{}))+encode_card(context.get('enemy',{}))
 

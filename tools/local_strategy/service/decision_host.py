@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 import hashlib
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
+import socket
 import msvcrt
 from pathlib import Path
 import subprocess
@@ -28,6 +29,8 @@ from reward_policy import RewardLedger
 from normal_match_capture import NormalMatchCapture
 from economy_evaluation import EconomyEvaluation
 from public_game_rules import PublicGameRules
+import feature_cache
+from decision_protocol import decode as decode_envelope
 
 
 def main():
@@ -36,12 +39,23 @@ def main():
     parser.add_argument("--arena", choices=["opening", "middle", "late"])
     parser.add_argument("--seconds", type=int, default=6)
     parser.add_argument("--arena-speed", type=float, default=4)
-    parser.add_argument("--arena-case", choices=["baseline", "pressure", "counters", "team", "hero", "sequence", "production","access","mechanics","cp-accounting","learning-feedback"], default="baseline")
+    parser.add_argument("--arena-case", choices=["baseline", "pressure", "counters", "team", "hero", "sequence", "production","access","mechanics","cp-accounting","learning-feedback","human-log"], default="baseline")
     parser.add_argument("--episode-dir", type=Path)
     parser.add_argument("--episode-seed", type=int, default=42)
     parser.add_argument("--episode-mode", choices=["sample", "evaluate"], default="sample")
     args = parser.parse_args()
     config = json.loads(args.config.read_text(encoding="utf-8"))
+    if not args.arena and config.get('auto_engine_update',False):
+        # Separate engine pointer: never rewrite the trained model configuration.
+        sys.path.insert(0,str(Path(config['engine_update_script']).parent))
+        import engine_update
+        try:
+            engine_update.start_background()
+            selected=engine_update.active()
+            if selected:
+                config['game_executable']=str(Path(selected['directory'])/'OpenBFME.exe')
+        except Exception as error:
+            print('Engine update deferred: '+str(error),flush=True)
     if args.episode_dir and not args.arena: parser.error("Training is arena-only")
     if args.episode_dir: args.episode_dir.mkdir(parents=True, exist_ok=False)
     folder = args.config.resolve().parent
@@ -93,7 +107,7 @@ def main():
             if args.episode_dir:
                 import shutil
                 shutil.copy2(reward_path,args.episode_dir / "reward-tuning.json")
-            episode = EpisodePolicy(args.episode_seed, args.episode_mode) if args.episode_dir else None
+            episode = EpisodePolicy(args.episode_seed, args.episode_mode) if args.episode_dir and not config.get("arena_benchmark",False) else None
             opponent = load_tactical_model(config.get("opponent_weights", weights)).ensure_factions() if episode else None
             spend_model = None
             if config.get("spend_weights"):
@@ -151,30 +165,50 @@ def main():
             record("knowledge_loaded", catalogue=knowledge.data["id"], neural_weights_changed=False)
             record("model_loaded", sha256=digest, parameters=sum(w.size for w in model.weights.values()), device="CPU", training_run="model-v0", policy_factions=list(model.factions), learning_isolation="independent faction weights")
             class Handler(BaseHTTPRequestHandler):
+                protocol_version="HTTP/1.1" if config.get("persistent_http") else "HTTP/1.0"
+                def setup(self):
+                    super().setup()
+                    self.connection.setsockopt(socket.IPPROTO_TCP,socket.TCP_NODELAY,1)
+                    self.connection.settimeout(30)
                 def log_message(self, *unused): pass
                 def reply(self, code, payload):
-                    raw = json.dumps(payload).encode()
+                    raw = json.dumps(payload,separators=(',',':') if config.get('compact_wire') else None).encode()
+                    self.response_bytes=len(raw)
+                    if getattr(self,"batch_replies",None) is not None:
+                        self.batch_replies.append({"status":code,"response":payload});return
                     self.send_response(code); self.send_header("Content-Type", "application/json")
                     self.send_header("Content-Length", str(len(raw))); self.end_headers(); self.wfile.write(raw)
                 def do_GET(self):
                     if self.path != "/health": self.reply(404, {"error": "unknown route"}); return
                     self.reply(200, {"backend": "decision_net_v0", "model": config["model"], "sha256": digest})
                 def do_POST(self):
-                    nonlocal normal_match, rewards
                     if self.path != "/api/chat": self.reply(404, {"error": "unknown route"}); return
+                    request_started=time.perf_counter()
                     try:
-                        length = int(self.headers.get("Content-Length", "0"))
-                        if not 0 < length <= 1024 * 1024: raise ValueError("Invalid request size")
-                        body = json.loads(self.rfile.read(length))
-                        if body.get("model") != config["model"]: raise ValueError("Unexpected model")
-                        message = next(m for m in reversed(body["messages"]) if m["role"] == "user")
-                        request = json.loads(message["content"])
+                        length=int(self.headers.get("Content-Length","0"))
+                        if not 0<length<=8*1024*1024:raise ValueError("Invalid request size")
+                        requests,batch=decode_envelope(json.loads(self.rfile.read(length)),config["model"])
+                    except (ValueError,KeyError,TypeError,StopIteration) as error:
+                        state["errors"]+=1;record("request_error",error=str(error))
+                        self.close_connection=True;self.reply(400,{"error":str(error)});return
+                    self.batch_replies=[] if batch else None
+                    for request in requests:self._one(request,length,request_started)
+                    if batch:
+                        replies=self.batch_replies;self.batch_replies=None
+                        self.reply(200,{"results":replies})
+                        record("inference_batch",size=len(requests),frame=requests[0]["observation"]["decision_frame"],request_bytes=length,response_bytes=self.response_bytes,peer_port=self.client_address[1])
+                def _one(self,request,length,request_started):
+                    nonlocal normal_match, rewards
+                    cache_token=feature_cache.begin(config.get('feature_cache',False))
+                    try:
                         observation, candidates = request["observation"], request["candidates"]
                         if not isinstance(observation, dict) or not isinstance(candidates, list) or not 1 <= len(candidates) <= 64: raise ValueError("Invalid state/candidates")
                         if any(not isinstance(c, dict) or not isinstance(c.get("id"), str) or not isinstance(c.get("description", ""), str) for c in candidates): raise ValueError("Invalid candidate")
+                        rules_started=time.perf_counter()
                         if public_rules:
                             rule_inputs=public_rules.attach(observation,candidates,request.get("production_options",[]))
                             record("public_rule_inputs",player=observation.get("player_index"),**rule_inputs)
+                        rules_finished=time.perf_counter()
                         start = time.perf_counter()
                         match_id = str(observation.get("match_id", ""))
                         if strict and not args.arena and match_id and normal_match != match_id:
@@ -197,6 +231,7 @@ def main():
                             except (ValueError,KeyError,TypeError) as error:
                                 record("reward_error",error=str(error))
                                 state["reward_errors"]=int(state.get("reward_errors",0))+1
+                        policy_started=time.perf_counter()
                         training_token = ""
                         spend_token = ""
                         spend_id = "none"
@@ -222,6 +257,7 @@ def main():
                             advice={"selected":selected,"scope":"model_only_no_scripted_advice"}
                         else:
                             selected, advice = knowledge.choose(opponent if episode else model, observation, candidates,feedback)
+                        policy_finished=time.perf_counter()
                         sequence_hint=sequence.hint(observation.get("command_history",{}))
                         mechanics_context=mechanics.context(observation.get("human_state_features"))
                         # Deliberately no path from this prediction to selected, answer,
@@ -234,11 +270,19 @@ def main():
                             production_shadow={"ready":False,"mode":"shadow","reason":"invalid_features","error":str(error),"controls_game":False}
                         elapsed = (time.perf_counter() - start) * 1000
                         answer = {"candidate_id": selected, "production_id": spend_id, "messages": [], "reason": "model_only" if strict else "arena neural policy " + args.episode_mode if training_token else "local decision network v0 + fandom-v1 soft advice"}
-                        self.reply(200, {"model": config["model"], "backend": "decision_net_v0", "done": True,
+                        reply_started=time.perf_counter()
+                        response={"model": config["model"], "backend": "decision_net_v0", "done": True,
                                          "training_action_id": training_token,
                                          "training_spend_id": spend_token,
                                          "sequence_hint":sequence_hint,
-                                         "message": {"role": "assistant", "content": json.dumps(answer)}})
+                                         "message": {"role": "assistant", "content": json.dumps(answer)}}
+                        if config.get('compact_wire'):
+                            del response['message']
+                            response['action']=answer
+                        self.reply(200,response)
+                        reply_finished=time.perf_counter()
+                        if config.get("inference_profile"):
+                            record("inference_profile",player=observation.get("player_index"),frame=observation.get("decision_frame"),request_bytes=length,response_bytes=self.response_bytes,peer_port=self.client_address[1],read_parse_ms=(rules_started-request_started)*1000,rules_ms=(rules_finished-rules_started)*1000,reward_and_observation_log_ms=(policy_started-start)*1000,policy_and_trace_ms=(policy_finished-policy_started)*1000,shadow_and_reply_ms=(reply_finished-policy_finished)*1000,server_total_ms=(reply_finished-request_started)*1000)
                         state["served"] += 1
                         record("knowledge_advice", **advice)
                         record("sequence_inference",player=observation.get("player_index"),**sequence_hint)
@@ -251,22 +295,40 @@ def main():
                     except (ValueError, KeyError, TypeError, StopIteration) as error:
                         state["errors"] += 1; record("request_error", error=str(error))
                         self.reply(400, {"error": str(error)})
+                    finally:
+                        feature_cache.end(cache_token)
             server = HTTPServer(("127.0.0.1", 0), Handler)
             thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.1}, daemon=True)
             thread.start()
             base = "http://127.0.0.1:" + str(server.server_port)
             status("ready", endpoint=base, sha256=digest)
             env = os.environ.copy()
+            env["OPENBFME_PERSISTENT_HTTP"]="1" if config.get("persistent_http") else "0"
+            env["OPENBFME_COMPACT_WIRE"]="1" if config.get("compact_wire") else "0"
+            env["OPENBFME_BATCH_WIRE"]="1" if config.get("batch_wire") else "0"
             env.update(OPENBFME_AI_URL=base, OPENBFME_AI_MANAGED="1", OPENBFME_AI_BACKEND="decision_net_v0")
+            env['OPENBFME_GAME_RULES_SHA256']=config.get('game_rules_sha256','')
+            if config.get('inference_profile'):
+                env['OPENBFME_INFERENCE_PROFILE']='1'
+                env['OPENBFME_PROFILE_HASH_STRIDE']=str(config.get('profile_hash_stride',1))
+            if config.get('arena_fast_poll'):env['OPENBFME_HEADLESS_FAST_POLL']='1'
+            if not args.arena:env['OPENBFME_AI_LOG_ROOT']=config['game_directory']
+            if args.arena and 'arena_engine_directory' in config:
+                env['OPENBFME_ENGINE_FROZEN']='1'
+                env['OPENBFME_ENGINE_CANDIDATE']=config['arena_engine_directory']
             if strict: env["OPENBFME_MODEL_ONLY"]="1"
             if episode: env["OPENBFME_AI_TRAINING"] = "1"
+            if config.get("arena_benchmark"): env.pop("OPENBFME_AI_TRAINING",None)
             if args.arena:
                 command = [sys.executable, config["arena_script"], args.arena, "--seconds", str(args.seconds), "--model", "on"]
                 command += ["--case", args.arena_case]
                 command += ["--speed", str(args.arena_speed)]
+                if config.get("arena_headless_training"):
+                    command += ["--headless-training","--speed",str(config.get("arena_time_scale",10.)),"--workspace",str(args.episode_dir / "runtime"),"--decision-stride",str(config.get("arena_decision_stride",5))]
                 if config.get("arena_sim_frames"): command += ["--sim-frames",str(config["arena_sim_frames"])]
+                if config.get("arena_benchmark"): command += ["--benchmark-team",str(config.get("benchmark_team",1))]
                 if config.get("arena_factions"): command += ["--factions", ",".join(config["arena_factions"])]
-                if episode:
+                if args.episode_dir:
                     command += ["--seed", str(args.episode_seed), "--output-dir", str(args.episode_dir / "arena")]
             else:
                 command = [config["game_executable"], "--", "--no-update-check", "-mod", config["mod_directory"]]

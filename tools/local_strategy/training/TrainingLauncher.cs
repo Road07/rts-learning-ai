@@ -80,7 +80,7 @@ sealed class TrainingWindow : Form {
         Controls.Add(grid);
         var title=new Label { Text="OpenBFME  /  AI Eğitimi", Dock=DockStyle.Fill, Font=new Font("Segoe UI",20,FontStyle.Bold), ForeColor=Color.FromArgb(25,45,69) };
         grid.Controls.Add(title,0,0);
-        grid.Controls.Add(new Label { Text="Aday model kısa oyun senaryolarında deneyerek öğrenir.\nTamamlanan eğitim kaydedilir; sonraki açılışta devam eder.", Dock=DockStyle.Fill, ForeColor=Color.FromArgb(70,83,104) },0,1);
+        grid.Controls.Add(new Label { Text="Eğitim başsız ve 10× hedef hızda çalışır.\nSeçilen dakika oyun süresidir; tamamlanan eğitim kaydedilir.", Dock=DockStyle.Fill, ForeColor=Color.FromArgb(70,83,104) },0,1);
         status.Dock=DockStyle.Fill; status.Font=new Font("Segoe UI",12,FontStyle.Bold);
         status.Text="Tur süresini seçip Başlat'a bas."; status.ForeColor=Color.FromArgb(22,82,145);
         grid.Controls.Add(status,0,2);
@@ -90,9 +90,9 @@ sealed class TrainingWindow : Form {
         log.BackColor=Color.White; log.ForeColor=Color.FromArgb(40,55,75); log.BorderStyle=BorderStyle.FixedSingle;
         grid.Controls.Add(log,0,4);
         var buttons=new FlowLayoutPanel { Dock=DockStyle.Fill, Margin=Padding.Empty, Padding=new Padding(0,10,0,0), WrapContents=false };
-        buttons.Controls.Add(new Label {Text="Tur süresi:",AutoSize=true,Margin=new Padding(0,7,4,0)});
-        duration.DropDownStyle=ComboBoxStyle.DropDownList; duration.Width=100;
-        foreach (int minutes in minuteOptions) duration.Items.Add(minutes+" dakika");
+        buttons.Controls.Add(new Label {Text="Oyun süresi:",AutoSize=true,Margin=new Padding(0,7,4,0)});
+        duration.DropDownStyle=ComboBoxStyle.DropDownList; duration.Width=110;
+        foreach (int minutes in minuteOptions) duration.Items.Add(minutes+" oyun dk");
         duration.SelectedIndex=0;
         try {
             string settings=Path.Combine(Path.GetDirectoryName(statePath),"launcher-settings.json");
@@ -172,7 +172,7 @@ sealed class TrainingWindow : Form {
                 string stage=Convert.ToString(row["stage"]), scenario=Convert.ToString(row["case"]);
                 string name=stage=="opening" ? "Başlangıç" : stage=="late" ? "Geç oyun" : "Orta oyun";
                 status.Text="Tur "+row["round"]+"  •  "+name+"\n"+(Convert.ToBoolean(row["evaluation"]) ? "Eğitim ve karşılaştırma kontrolü" : "Model karar veriyor ve sonuçları ölçülüyor");
-                AddLog("Tur "+row["round"]+": "+name+" / "+scenario+" ("+row["seconds"]+" sn).");
+                AddLog("Tur "+row["round"]+": "+name+" / "+scenario+" ("+row["seconds"]+" oyun sn, başsız 10×).");
             }
             if (kind=="completed") {
                 double reward=Convert.ToDouble(row["reward"]);

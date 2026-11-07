@@ -2,6 +2,19 @@ extends RefCounted
 
 const C=preload("res://scripts/team_ai/contracts.gd")
 
+
+# Native strategy_observation is already fog-filtered; no world queries here.
+static func entity_state(obs: Dictionary) -> Dictionary:
+	var entities: Array=[]
+	var fields=["id","template","x","y","health_ratio","own_cost","public_cost","queue_count","resource_share","member_count","complete","hero","structure","base","builder","mobile","armed","combat_active","contained_by","factory_disabled","category"]
+	for player in obs.get("players",[]):
+		for object in player.get("objects",[]):
+			var row: Dictionary={"relation":player.relation,"faction":player.get("faction",""),"visible":true}
+			for field in fields:
+				if object.has(field): row[field]=object[field]
+			entities.append(row)
+	return {"encoding":"rts-entities-v1","source":"native_fog_filtered","frame":int(obs.observed_frame),"map_extent":obs.get("map_extent",{}).duplicate(true),"entities":entities}
+
 static func army(objects: Array) -> Array:
 	return objects.filter(func(o): return not o.get("structure",false) and o.get("mobile",false) and not o.get("builder",false))
 

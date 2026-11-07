@@ -1,3 +1,16 @@
+> Başsız eğitim güncellemesi (2026-11-06): AI-Otomatik-Egitim.exe varsayılan
+> başsız 10x hedef hız kullanır. 3/5/15/30 dakika artık oyun/simülasyon süresidir;
+> gerçek süre donanım, yükleme ve çıkarıma bağlıdır. Eski aşağıdaki duvar-zamanı
+> açıklamaları yalnız legacy CLI için geçerlidir. Her tur/eş değerlendirme özel
+> runtime/PCK ve log klasöründedir; karar yanıtında simülasyon bekler. Aynı
+> EpisodePolicy/olasılık, action-credit-v3, faction bankaları ve tamamlanan
+> tur aktivasyonu korunur. Bu yeni PyTorch/PPO'ya geçiş değildir.
+
+> Güncel algoritma notu (2026-11-06): Bu başlatıcı hâlâ eski NumPy
+> policy-gradient yoludur; öğrenilmiş critic/GAE ve PPO ratio clipping yoktur.
+> Ayrı PyTorch PPO+GAE API'si ve doğrulaması [PPO-GAE.md](PPO-GAE.md) içinde;
+> canlı rollout/eğitim/aktivasyon bağlantısı tamamlanmadı.
+
 # Otomatik eğitim döngüsü — bina ve üretim dahil
 
 Çift tıklamayla **sürekli** eğitim için oyun klasöründeki
@@ -144,3 +157,28 @@ Kullanıcının tercihiyle tamamlanan her geçerli koşu otomatik etkinleştiril
 bu seçim her güncellemenin daha iyi oynayacağını garanti etmez.
 Tam strateji hedefi için gerçek maç bitişi/galibiyet, daha uzun ufuklar,
 serbest yerleşim ve grup/komut zamanlaması öğrenimi ile farklı rakipler sonraki genişletmelerdir.
+
+## 2026-11-07 — Tur sonu kayıt hatasının onarımı
+
+engine_update import'u üst dizini arama yoluna eklediğinde geç yapılan
+`from benchmark import add`, eski local_strategy/benchmark.py dosyasını yüklüyordu.
+Oyun/eğitim tamamlandığı halde değerlendirme kaydı sırasında ImportError oluşuyor,
+aktivasyon ve başlatıcının ilerleme kaydı yapılmıyordu. checkpoint_registry.py
+kayıt modülünü kesin dosya yolundan yükler; isim/önbellek çakışmasına bağımlı değildir.
+Kuyruk kayıt hatası ayrıca raporlanır; yanlış modül yeniden seçilmez.
+
+GUI'nin eski PATH ortamında Git bulunamaması da giderildi: güncelleyici önce
+PATH'i, sonra kurulu yerel Python çalışma ortamının Git dosyasını kullanır.
+Güncel motor için eski failed durumu ready/already_current olarak yenilenir.
+
+Kanıt: iki isim çakışması ve iki Git çözümleme kontrolü; aynı EXE --verify ile
+yalnız bir6 s middle/pressure turu, completed=1 ve süreç sahipliği/temizliği başarılı.
+Git PATH boşken de gerçek --version çağrısı çalıştı. Uzun oyun yeniden çalıştırılmadı.
+
+auto-20261107-181044-727090-31 koşusunun bütün tur/episode/NPZ hashleri doğrulandı.
+repair_registry_failure.py yalnız bilinen ImportError, tüm cycles tamamlanmış,
+bekleyen evaluate bulunmayan ve değişmemiş dosyalar için kayıt sonlandırır.
+İlk hata raporu report.before-registry-repair.json olarak korundu. Gradyan veya
+maç tekrarı olmadan31. tur kaydedildi ve mevcut otomatik aktarım yoluyla oyuna
+aktarıldı; başlatıcı next_seed=1761 oldu. Bu, modelin güçlendiği ölçümü değildir.
+Özel kanıt: AI-Test-Sahasi/automatic-training-registry-fix.json.

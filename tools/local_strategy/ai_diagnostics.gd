@@ -16,6 +16,7 @@ var last_flush_ms = 0
 
 func open_session() -> void:
 	folder = OS.get_executable_path().get_base_dir().path_join("logs")
+	if not OS.get_environment("OPENBFME_AI_LOG_ROOT").is_empty(): folder=OS.get_environment("OPENBFME_AI_LOG_ROOT").path_join("logs")
 	if DirAccess.make_dir_recursive_absolute(folder) != OK:
 		push_error("AI_DIAG could not create local logs folder")
 		return

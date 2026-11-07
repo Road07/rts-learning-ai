@@ -146,21 +146,22 @@ index 2fa6649..216bcd6 100644
  
  // RW 0x77A764
 diff --git a/engine/src/GameLogic/GameLogicDispatch.h b/engine/src/GameLogic/GameLogicDispatch.h
-index fb81f76..c75fdd5 100644
+index fb81f76..333f0de 100644
 --- a/engine/src/GameLogic/GameLogicDispatch.h
 +++ b/engine/src/GameLogic/GameLogicDispatch.h
-@@ -67,6 +67,10 @@ public:
+@@ -67,6 +67,11 @@ public:
  	void attach(CommandList &list);
  	// one message (RW 0x779A3D)
  	void dispatch(const GameMessage &message);
 +	// Opt-in observer, outside CRC/save state. Access only while the logic is held.
 +	void setHumanCapture(bool enabled) { m_humanCapture = enabled; }
++	void setHumanPolicyCapture(std::function<std::string(int,int)> capture) { m_humanPolicyCapture=std::move(capture); }
 +	void sampleHumanCapture();
 +	std::vector<std::string> takeHumanCapture();
  
  	// a handler returns false when it found the message malformed (counted by the lane, reported through errors())
  	typedef std::function<bool(GameLogic &, const GameMessage &)> Handler;
-@@ -107,4 +111,13 @@ private:
+@@ -107,4 +112,14 @@ private:
  	std::map<int, Registered> m_handlers;
  	std::map<int, unsigned long long> m_unhandled;
  	std::vector<std::string> m_errors;
@@ -169,6 +170,7 @@ index fb81f76..c75fdd5 100644
 +	void captureHumanState(Player &player, const char *reason);
 +	void humanRecord(std::string row);
 +	bool m_humanCapture = false;
++	std::function<std::string(int,int)> m_humanPolicyCapture; // Opt-in read-only pre-dispatch value snapshot.
 +	std::vector<std::string> m_humanRecords;
 +	size_t m_humanBytes = 0, m_humanDropped = 0;
 +	unsigned long long m_humanSequence = 0;
@@ -1381,7 +1383,7 @@ index 48eaccc..84fd459 100644
  	// manager + 0xA3C: the players with a player info record (every playable player of a started game), in index order
  	const std::vector<int> &infoPlayers() const { return m_infoPlayers; }
 diff --git a/engine/src/GodotDevice/GodotGameWorld.cpp b/engine/src/GodotDevice/GodotGameWorld.cpp
-index 01122c3..f3417ef 100644
+index 01122c3..4ed8362 100644
 --- a/engine/src/GodotDevice/GodotGameWorld.cpp
 +++ b/engine/src/GodotDevice/GodotGameWorld.cpp
 @@ -2,6 +2,7 @@
@@ -1424,7 +1426,11 @@ index 01122c3..f3417ef 100644
  #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DModelDraw.h"
  #include "GameClient/PlacementGhost.h"
  #include "GameLogic/Map/CastleTemplates.h"
-@@ -115,6 +127,7 @@
+@@ -112,9 +124,11 @@
+ #include <godot_cpp/variant/color.hpp>
+ #include <godot_cpp/variant/packed_string_array.hpp>
+ #include <godot_cpp/variant/utility_functions.hpp>
++#include <godot_cpp/classes/json.hpp>
  #include <godot_cpp/variant/vector3.hpp>
  
  #include <algorithm>
@@ -1432,12 +1438,22 @@ index 01122c3..f3417ef 100644
  #include <cstdio>
  #if defined(__GLIBC__)
  #include <dlfcn.h>
-@@ -275,6 +288,18 @@ void GameWorld::_bind_methods()
+@@ -128,6 +142,8 @@
+ // the binary's model condition names (GameLogic/BitFlags.h: not included here, its ModelConditionFlags typedef collides with Common/ModelState.h)
+ extern const char *const TheModelConditionNames[];
+ 
++namespace { thread_local bool capturingHumanPolicy=false; }
++
+ namespace godot
+ {
+ 
+@@ -275,6 +291,19 @@ void GameWorld::_bind_methods()
  	ClassDB::bind_method(D_METHOD("get_combat_report"), &GameWorld::get_combat_report);
  	ClassDB::bind_method(D_METHOD("get_shroud_report"), &GameWorld::get_shroud_report);
  	ClassDB::bind_method(D_METHOD("get_ai_report"), &GameWorld::get_ai_report);
 +	ClassDB::bind_method(D_METHOD("strategy_observation", "player"), &GameWorld::strategy_observation);
 +	ClassDB::bind_method(D_METHOD("human_training_records", "enabled"), &GameWorld::human_training_records, DEFVAL(true));
++	ClassDB::bind_method(D_METHOD("gym_reward_state"), &GameWorld::gym_reward_state);
 +	ClassDB::bind_method(D_METHOD("strategy_set_policy", "player", "policy"), &GameWorld::strategy_set_policy);
 +	ClassDB::bind_method(D_METHOD("strategy_construct", "player", "builder", "name", "x", "y"), &GameWorld::strategy_construct);
 +	ClassDB::bind_method(D_METHOD("strategy_production_options", "player", "training_only"), &GameWorld::strategy_production_options, DEFVAL(false));
@@ -1451,7 +1467,7 @@ index 01122c3..f3417ef 100644
  	ClassDB::bind_method(D_METHOD("get_shroud_status_at", "x", "y"), &GameWorld::get_shroud_status_at);
  	ClassDB::bind_method(D_METHOD("get_object_shroud_status", "object_id"), &GameWorld::get_object_shroud_status);
  	ClassDB::bind_method(D_METHOD("set_shroud_drawn", "on"), &GameWorld::set_shroud_drawn);
-@@ -325,6 +350,7 @@ void GameWorld::_bind_methods()
+@@ -325,6 +354,7 @@ void GameWorld::_bind_methods()
  	ClassDB::bind_method(D_METHOD("debug_add_science_points", "player", "points"), &GameWorld::debug_add_science_points);
  	ClassDB::bind_method(D_METHOD("debug_set_object_rank", "id", "rank"), &GameWorld::debug_set_object_rank); // lane HUD-5
  	ClassDB::bind_method(D_METHOD("debug_grant_upgrade", "player", "upgrade"), &GameWorld::debug_grant_upgrade);
@@ -1459,7 +1475,7 @@ index 01122c3..f3417ef 100644
  	ClassDB::bind_method(D_METHOD("order_move", "ids", "x", "y", "options"), &GameWorld::order_move, DEFVAL(Dictionary()));
  	ClassDB::bind_method(D_METHOD("order_stop", "ids"), &GameWorld::order_stop);
  	ClassDB::bind_method(D_METHOD("build2_wall_hub", "player", "hub_template"), &GameWorld::build2_wall_hub);
-@@ -2766,6 +2792,7 @@ Dictionary GameWorld::get_object(int64_t id) const
+@@ -2766,6 +2796,7 @@ Dictionary GameWorld::get_object(int64_t id) const
  		d["damage_state"] = (int64_t)b->getDamageState();
  	}
  	d["contained_by"] = o->getContainedBy() ? (int64_t)o->getContainedBy()->getID() : (int64_t)0;
@@ -1467,7 +1483,7 @@ index 01122c3..f3417ef 100644
  	Array members;
  	if (const ContainModuleInterface *c = o->getContain())
  	{
-@@ -3234,7 +3261,7 @@ Dictionary GameWorld::get_production(int64_t player, int64_t producer) const
+@@ -3234,7 +3265,7 @@ Dictionary GameWorld::get_production(int64_t player, int64_t producer) const
  	}
  	::Player *p = m_game->players().getNthPlayer((int)player);
  	::Object *o = m_game->logic().findObjectByID((::ObjectID)producer);
@@ -1476,7 +1492,7 @@ index 01122c3..f3417ef 100644
  	{
  		return d;
  	}
-@@ -3246,6 +3273,9 @@ Dictionary GameWorld::get_production(int64_t player, int64_t producer) const
+@@ -3246,6 +3277,9 @@ Dictionary GameWorld::get_production(int64_t player, int64_t producer) const
  		for (const ProductionEntry *e = pu->firstProduction(); e; e = pu->nextProduction(e))
  		{
  			Dictionary q;
@@ -1486,7 +1502,7 @@ index 01122c3..f3417ef 100644
  			q["template"] = String(e->objectToProduce ? e->objectToProduce->getName().c_str() : (e->upgradeToResearch ? e->upgradeToResearch->getUpgradeName().c_str() : ""));
  			q["percent"] = (double)e->percentComplete;
  			q["quantity_total"] = e->quantityTotal;
-@@ -3255,6 +3285,20 @@ Dictionary GameWorld::get_production(int64_t player, int64_t producer) const
+@@ -3255,6 +3289,20 @@ Dictionary GameWorld::get_production(int64_t player, int64_t producer) const
  		}
  	}
  	d["queue"] = queue;
@@ -1507,7 +1523,7 @@ index 01122c3..f3417ef 100644
  	d["errors"] = m_commandErrors;
  	Array dispatchErrors;
  	for (const std::string &e : m_game->dispatch().errors())
-@@ -5153,6 +5197,33 @@ int64_t GameWorld::debug_add_science_points(int64_t player, int64_t points)
+@@ -5153,6 +5201,33 @@ int64_t GameWorld::debug_add_science_points(int64_t player, int64_t points)
  	return p->science().getSciencePurchasePoints();
  }
  
@@ -1541,7 +1557,7 @@ index 01122c3..f3417ef 100644
  bool GameWorld::debug_grant_upgrade(int64_t player, const String &upgrade)
  {
  	// a viewer-scenario hook only: it changes the simulation without a command, so never in a started skirmish, a network game or under the logic worker
-@@ -5365,6 +5436,7 @@ Dictionary GameWorld::get_spellbook(int64_t player) const
+@@ -5365,6 +5440,7 @@ Dictionary GameWorld::get_spellbook(int64_t player) const
  			}
  			Dictionary pw;
  			pw["name"] = String(t->getName().c_str());
@@ -1549,7 +1565,7 @@ index 01122c3..f3417ef 100644
  			bool owned = t->getRequiredSciences().empty();
  			for (ScienceType st : t->getRequiredSciences())
  			{
-@@ -7247,4 +7319,845 @@ void GameWorld::net_submit_view(float cameraX, float cameraY, float cursorX, flo
+@@ -7247,4 +7323,907 @@ void GameWorld::net_submit_view(float cameraX, float cameraY, float cursorX, flo
  	m_netSession->network().submitView(m_game->frame(), cameraX, cameraY, cursorX, cursorY, cursorOverWorld);
  }
  
@@ -1561,15 +1577,58 @@ index 01122c3..f3417ef 100644
 +	const auto context = m_world ? m_world->enterContext() : nullptr;
 +	auto &dispatch = m_game->dispatch();
 +	dispatch.setHumanCapture(enabled && !m_netStarted && !m_replayPlayback && !m_saveLoad);
++	if (enabled && !m_netHost && !m_netClient && !m_netSession && !m_netStarted && !m_replayPlayback && !m_saveLoad) {
++		dispatch.setHumanPolicyCapture([this](int player,int commandType) -> std::string {
++			struct Guard { bool previous=capturingHumanPolicy; Guard(){capturingHumanPolicy=true;} ~Guard(){capturingHumanPolicy=previous;} } guard;
++			Dictionary payload;
++			payload["candidate_policy"]="model-default-bounded-v1";
++			payload["observation"]=strategy_observation(player);
++			payload["spend_candidates"]=(commandType==MSG_DO_MOVETO || commandType==MSG_DO_ATTACK_OBJECT) ? Array() : strategy_model_options(player,false);
++			return toNative(JSON::stringify(payload));
++		});
++	} else dispatch.setHumanPolicyCapture({});
 +	dispatch.sampleHumanCapture();
 +	for (const auto &row : dispatch.takeHumanCapture()) out.push_back(toGodot(row));
++	return out;
++}
++
++Dictionary GameWorld::gym_reward_state()
++{
++	Dictionary out;out["ok"]=false;
++	if (!m_game || m_netHost || m_netClient || m_netSession || m_netStarted || m_replayPlayback || m_saveLoad) {
++		out["error"]="reward truth requires a fresh local game";return out;
++	}
++	m_game->drainFrames();
++	const auto context=m_world ? m_world->enterContext() : nullptr;
++	GameLogic &logic=m_game->logic();Array players;
++	for (int i=1;i<logic.players().getPlayerCount();++i) {
++		const Player *p=logic.players().getNthPlayer(i);
++		if (!p || !p->getPlayerTemplate() || !p->getPlayerTemplate()->m_playableSide || p->isObserver()) continue;
++		int buildings=0;int64_t army=0;bool complete=true;
++		for (const ::Object *o=logic.getFirstObject();o;o=o->getNextObject()) {
++			if (o->getControllingPlayer()!=p || o->isEffectivelyDead() || o->isDestroyed()) continue;
++			if (o->isKindOfName("STRUCTURE")) { ++buildings;continue; }
++			// Same army membership as ObserverMetrics: count a horde once, retain
++			// units in mines/garrisons, exclude builders/projectiles/horde members.
++			if (o->isKindOfName("DOZER") || o->isKindOfName("PROJECTILE") || o->isKindOfName("HORDE_MEMBER") ||
++				(o->getContainedBy() && o->getContainedBy()->isKindOfName("HORDE"))) continue;
++			if (!o->getAIUpdateInterface() && !o->isKindOfName("CAN_ATTACK") && !o->isKindOfName("HORDE") && !o->isKindOfName("HERO")) continue;
++			const ThingTemplate &tt=*o->getTemplate()->getFinalOverride();
++			const FieldValue *cost=tt.findField("BuildCost");
++			if (!cost || !std::holds_alternative<long long>(*cost)) complete=false;
++			else army+=BuildAssistant::buildCost(tt);
++		}
++		Dictionary row;row["player"]=i;row["building_count"]=buildings;row["army_value"]=army;row["army_complete"]=complete;
++		players.push_back(row);
++	}
++	out["ok"]=true;out["frame"]=(int64_t)logic.getFrame();out["players"]=players;
 +	return out;
 +}
 +
 +Dictionary GameWorld::strategy_observation(int64_t playerIndex)
 +{
 +	// Snapshot from a completed logic frame; inference itself runs elsewhere.
-+	if (m_game) m_game->drainFrames();
++	if (m_game && !capturingHumanPolicy) m_game->drainFrames();
 +	const auto worldContext = m_world ? m_world->enterContext() : nullptr;
 +	Dictionary out;
 +	out["ok"] = false;
@@ -1580,7 +1639,7 @@ index 01122c3..f3417ef 100644
 +	}
 +	GameLogic &logic = m_game->logic();
 +	Player *observer = logic.players().getNthPlayer((int)playerIndex);
-+	if (!observer || observer->getPlayerType() != PLAYER_COMPUTER || !observer->getPlayerTemplate() || !observer->getPlayerTemplate()->m_playableSide)
++	if (!observer || (observer->getPlayerType() != PLAYER_COMPUTER && !(capturingHumanPolicy && observer->getPlayerType()==PLAYER_HUMAN && !observer->isObserver())) || !observer->getPlayerTemplate() || !observer->getPlayerTemplate()->m_playableSide)
 +	{
 +		out["error"] = "observer must be a playable computer player";
 +		return out;
@@ -1590,6 +1649,10 @@ index 01122c3..f3417ef 100644
 +	out["observed_frame"] = (int64_t)logic.getFrame();
 +	out["player_index"] = playerIndex;
 +	out["faction"] = toGodot(observer->getPlayerTemplate()->getName());
++	out["spell_points"]=(int64_t)observer->science().getSciencePurchasePoints();
++	Dictionary mapExtent;float extentX=0,extentY=0;
++	if (logic.terrain() && logic.terrain()->getExtent(0,extentX,extentY)) { mapExtent["extent_x"]=extentX;mapExtent["extent_y"]=extentY; }
++	out["map_extent"]=mapExtent;
 +	out["personality"] = CounterProduction::personality(logic.random().baseSeed(), (int)playerIndex);
 +	out["match_seed"] = (int64_t)logic.random().baseSeed();
 +	if (const AISkirmishPlayer *ai = logic.skirmishAI().findAI((int)playerIndex))
@@ -1620,6 +1683,20 @@ index 01122c3..f3417ef 100644
 +			const auto range = ai->build.units.factories.equal_range(ai->store->keyOf(member.unit));
 +			for (auto factory = range.first; factory != range.second; ++factory) armyFactories.insert(factory->second);
 +		}
++	if (capturingHumanPolicy && observer->getPlayerType()==PLAYER_HUMAN && TheCommandStore) {
++		for (const ::Object *o=logic.getFirstObject();o;o=o->getNextObject()) {
++			if (o->getControllingPlayer()!=observer || o->isEffectivelyDead() || o->isDestroyed()) continue;
++			const CommandSet *set=TheCommandStore->findCommandSet(o->getCommandSetName());
++			if (!set) continue;
++			for (int slot=0;slot<CommandSet::slotCapacity();++slot) {
++				const CommandButton *button=set->getCommandButton(slot);
++				if (!button || button->m_command!=GUI_COMMAND_UNIT_BUILD) continue;
++				const ThingTemplate *tt=button->getThingTemplate();
++				const int role=tt ? AIThreatFinder::threatCategory(*tt) : -1;
++				if ((role>=0 && role<=3) || (tt && tt->getName()=="AngmarThrallMaster")) armyFactories.insert(o->getID());
++			}
++		}
++	}
 +	static const std::vector<unsigned> combatBits = [] {
 +		std::vector<unsigned> bits;
 +		for (unsigned bit = 0; bit < 19 * 32 && TheModelConditionNames[bit]; ++bit)
@@ -1794,7 +1871,7 @@ index 01122c3..f3417ef 100644
 +	GameLogic &logic = m_game->logic();
 +	Player *player = logic.players().getNthPlayer((int)playerIndex);
 +	AISkirmishPlayer *ai = logic.skirmishAI().findAI((int)playerIndex);
-+	if (!player || player->getPlayerType() != PLAYER_COMPUTER || !ai || !ai->store->data().enhancedCounterProduction) return out;
++	if (!player || player->getPlayerType() != PLAYER_COMPUTER || !ai || (!ai->store->data().enhancedCounterProduction && !ai->build.units.modelOnlyControl)) return out;
 +	Array weights = policy.get("weights", Array());
 +	if (weights.size() != 4) return out;
 +	for (int i = 0; i < 4; ++i)
@@ -1849,7 +1926,7 @@ index 01122c3..f3417ef 100644
 +	GameLogic &logic=m_game->logic();
 +	Player *p=logic.players().getNthPlayer((int)playerIndex);
 +	AISkirmishPlayer *ai=logic.skirmishAI().findAI((int)playerIndex);
-+	if (!p || p->getPlayerType()!=PLAYER_COMPUTER || !ai || !ai->store->data().enhancedCounterProduction) return out;
++	if (!p || p->getPlayerType()!=PLAYER_COMPUTER || !ai || (!ai->store->data().enhancedCounterProduction && !ai->build.units.modelOnlyControl)) return out;
 +	ai->build.units.trainingControlUntil=frames ? (int)logic.getFrame()+(int)frames : 0;
 +	out["ok"]=true; return out;
 +}
@@ -1905,12 +1982,12 @@ index 01122c3..f3417ef 100644
 +{
 +	Array empty;
 +	if (!m_game || m_netHost || m_netClient || m_netStarted || m_netSession || m_replayPlayback || m_saveLoad) return empty;
-+	m_game->drainFrames();
++	if (!capturingHumanPolicy) m_game->drainFrames();
 +	const auto context=m_world ? m_world->enterContext() : nullptr;
 +	GameLogic &logic=m_game->logic();
 +	Player *p=logic.players().getNthPlayer((int)playerIndex);
 +	AISkirmishPlayer *ai=logic.skirmishAI().findAI((int)playerIndex);
-+	if (!p || !ai || !ai->build.units.modelOnlyControl || !TheCommandStore) return empty;
++	if (!p || !TheCommandStore || (!(capturingHumanPolicy && p->getPlayerType()==PLAYER_HUMAN) && (!ai || !ai->build.units.modelOnlyControl))) return empty;
 +	const bool one=!requestedId.is_empty();
 +	const std::string wantedKind=one ? toNative(requestedId.get_slice(":",0)) : "";
 +	const int64_t wantedSource=one ? requestedId.get_slice(":",1).to_int() : 0;
@@ -2189,7 +2266,7 @@ index 01122c3..f3417ef 100644
 +	GameLogic &logic=m_game->logic();
 +	Player *p=logic.players().getNthPlayer((int)playerIndex);
 +	AISkirmishPlayer *ai=logic.skirmishAI().findAI((int)playerIndex);
-+	if (!p || p->getPlayerType()!=PLAYER_COMPUTER || !ai || !ai->store->data().enhancedCounterProduction) return out;
++	if (!p || p->getPlayerType()!=PLAYER_COMPUTER || !ai) return out;
 +	ai->build.units.modelOnlyControl=enabled;
 +	out["ok"]=true; return out;
 +}
@@ -2198,16 +2275,17 @@ index 01122c3..f3417ef 100644
 +{
 +	Array out;
 +	if (!m_game || m_netStarted || m_replayPlayback || m_saveLoad) return out;
-+	m_game->drainFrames();
++	if (!capturingHumanPolicy) m_game->drainFrames();
 +	const auto worldContext = m_world ? m_world->enterContext() : nullptr;
 +	GameLogic &logic = m_game->logic();
 +	Player *p = logic.players().getNthPlayer((int)playerIndex);
 +	const AISkirmishPlayer *ai = logic.skirmishAI().findAI((int)playerIndex);
-+	if (!p || p->getPlayerType() != PLAYER_COMPUTER || !ai || !ai->store->data().enhancedCounterProduction || !TheCommandStore || (int)logic.getFrame() < ai->build.units.strategySpendUntil) return out;
++	const bool demonstration=capturingHumanPolicy && p && p->getPlayerType()==PLAYER_HUMAN;
++	if (!p || !TheCommandStore || (!demonstration && (p->getPlayerType()!=PLAYER_COMPUTER || !ai || (!ai->store->data().enhancedCounterProduction && !ai->build.units.modelOnlyControl) || (int)logic.getFrame()<ai->build.units.strategySpendUntil))) return out;
 +	std::unordered_set<std::string> offered;
-+	const bool siegeAllowed = AIBaseBuilder::modelSiegeAllowed(logic, *ai);
-+	const bool controlled = ai->build.units.modelOnlyControl || (int)logic.getFrame() < ai->build.units.trainingControlUntil;
-+	const bool modelOnly=ai->build.units.modelOnlyControl;
++	const bool siegeAllowed = demonstration || AIBaseBuilder::modelSiegeAllowed(logic, *ai);
++	const bool controlled = demonstration || ai->build.units.modelOnlyControl || (int)logic.getFrame() < ai->build.units.trainingControlUntil;
++	const bool modelOnly=demonstration || ai->build.units.modelOnlyControl;
 +	std::vector<const ::Object *> friendlyFarms;
 +	const ::Object *home=nullptr;
 +	bool hasWallHub=false;
@@ -2230,7 +2308,7 @@ index 01122c3..f3417ef 100644
 +		if (o->getControllingPlayer() != p || o->isEffectivelyDead() || o->isDestroyed() || o->isUnderConstruction()) continue;
 +		DozerAIUpdate *dozer = dynamic_cast<DozerAIUpdate *>(o->getAIUpdateInterface());
 +		const bool builder = !trainingOnly && dozer && o->isKindOfName("DOZER") && dozer->getCurrentTask() == DozerAIUpdate::DOZER_TASK_INVALID && !dozer->isAnyTaskPending() && !dozer->isMoving();
-+		if (builder && ai->store->data().classicOpening && !ai->build.units.classicDone && !controlled) continue;
++		if (builder && ai && ai->store->data().classicOpening && !ai->build.units.classicDone && !controlled) continue;
 +		const ProductionUpdateInterface *production = o->getProductionUpdate();
 +		if (!builder && (!production || production->isFactoryDisabled() || production->getProductionCount() != 0)) continue;
 +		const CommandSet *set = TheCommandStore->findCommandSet(o->getCommandSetName());
@@ -2258,7 +2336,7 @@ index 01122c3..f3417ef 100644
 +			op["cost"] = BuildAssistant::calcCostToBuild(*tt, p, o, -1);
 +			op["cp_cost"]=std::max(0,BuildAssistant::commandPoints(*tt));
 +			op["build_seconds"]=BuildAssistant::calcTimeToBuild(*tt,p,o,-1,logic.productionSettings(),logic)/5.0;
-+			if (controlled) { op["role"]=AIThreatFinder::threatCategory(*tt); op["economy"]=tt->getName()==ai->army->economyTemplate; }
++			if (controlled) { op["role"]=AIThreatFinder::threatCategory(*tt); op["economy"]=(demonstration ? (TerrainResourceClaimView::resourceDataOf(*tt) && TerrainResourceClaimView::resourceDataOf(*tt)->m_maxIncome>0) : tt->getName()==ai->army->economyTemplate); }
 +			if (trainingOnly) { op["producer_template"]=toGodot(o->getTemplate()->getName()); op["queue_count"]=0; }
 +			if (builder && modelOnly) {
 +				struct Site { Dictionary op; float share, travel, exposure, homeDistance; };
@@ -2309,10 +2387,10 @@ index 01122c3..f3417ef 100644
 +						Coord3D at{ o->getPosition()->x + radius * std::cos(angle), o->getPosition()->y + radius * std::sin(angle), 0.0f };
 +						at.z = logic.getGroundHeight(at.x, at.y);
 +						if (m_game->shroud().getStatusAt((int)playerIndex, at.x, at.y) != 0 || !dozer->siteIsLegal(*tt, at, 0.0f, *p)) continue;
-+						if (tt->getName()==ai->army->economyTemplate)
++						if ((demonstration ? (TerrainResourceClaimView::resourceDataOf(*tt) && TerrainResourceClaimView::resourceDataOf(*tt)->m_maxIncome>0) : tt->getName()==ai->army->economyTemplate))
 +						{
 +							const float share=AIBaseBuilder::modelFarmQuality(logic,*p,*tt,at);
-+							if (!ai->build.units.modelOnlyControl && share<0.70f) continue;
++							if (!modelOnly && share<0.70f) continue;
 +							op["farm_share"]=share;
 +						}
 +						op["x"] = at.x; op["y"] = at.y; found = true;
@@ -2366,7 +2444,7 @@ index 01122c3..f3417ef 100644
 +	::Object *builder = logic.findObjectByID((::ObjectID)builderId);
 +	if (!p || !p->getPlayerTemplate() || p->getPlayerType() != PLAYER_COMPUTER || !builder || builder->getControllingPlayer() != p || builder->isEffectivelyDead()) return out;
 +	const AISkirmishPlayer *ai = logic.skirmishAI().findAI((int)playerIndex);
-+	if (!ai || !ai->store->data().enhancedCounterProduction) return out;
++	if (!ai || (!ai->store->data().enhancedCounterProduction && !ai->build.units.modelOnlyControl)) return out;
 +	if ((int)logic.getFrame() < ai->build.units.strategySpendUntil) { out["reason"] = "model_purchase_pending"; return out; }
 +	if (ai->store->data().classicOpening && !ai->build.units.classicDone && !ai->build.units.modelOnlyControl && (int)logic.getFrame()>=ai->build.units.trainingControlUntil) { out["reason"] = "classic_opening_controls_construction"; return out; }
 +	DozerAIUpdate *dozer = dynamic_cast<DozerAIUpdate *>(builder->getAIUpdateInterface());
@@ -2396,10 +2474,10 @@ index 01122c3..f3417ef 100644
 +
  } // namespace godot
 diff --git a/engine/src/GodotDevice/GodotGameWorld.h b/engine/src/GodotDevice/GodotGameWorld.h
-index 46bad5b..fb6a4a1 100644
+index 46bad5b..acbc598 100644
 --- a/engine/src/GodotDevice/GodotGameWorld.h
 +++ b/engine/src/GodotDevice/GodotGameWorld.h
-@@ -148,6 +148,20 @@ public:
+@@ -148,6 +148,22 @@ public:
  	Dictionary get_shroud_report() const;
  	// lane AI-2 r5: every computer player's live tactics (kind, started, step, the teams' member ids and centres, the target, waypoints) for viewers / videos
  	Array get_ai_report() const;
@@ -2407,6 +2485,8 @@ index 46bad5b..fb6a4a1 100644
 +	// own fog and stealth visibility. Never exposes unseen enemy objects/economy.
 +	Dictionary strategy_observation(int64_t player);
 +	PackedStringArray human_training_records(bool enabled = true);
++	// Privileged, read-only local training statistics. Never policy observations.
++	Dictionary gym_reward_state();
 +	Dictionary strategy_set_policy(int64_t player, const Dictionary &policy);
 +	Dictionary strategy_build_forward(int64_t player, int64_t builder, double x, double y);
 +	Dictionary strategy_construct(int64_t player, int64_t builder, const String &name, double x, double y);
@@ -2420,7 +2500,7 @@ index 46bad5b..fb6a4a1 100644
  	int64_t get_shroud_status_at(double x, double y) const;
  	int64_t get_object_shroud_status(int64_t objectId) const;
  	void set_shroud_drawn(bool on);
-@@ -253,6 +267,8 @@ public:
+@@ -253,6 +269,8 @@ public:
  	// lane PROJ-2 (scenario helper, outside the command path like create_object): the player's upgrade completes at once (Player::addUpgrade COMPLETE, RW 0x6AEE22:
  	// the player's objects' upgrade modules run); false for an unknown player or upgrade name
  	bool debug_grant_upgrade(int64_t player, const String &upgrade);
@@ -2463,7 +2543,7 @@ diff --git a/engine/src/GameLogic/HumanTrainingCapture.cpp b/engine/src/GameLogi
 new file mode 100644
 --- /dev/null
 +++ b/engine/src/GameLogic/HumanTrainingCapture.cpp
-@@ -0,0 +1,255 @@
+@@ -0,0 +1,276 @@
 +// OpenBFME. GPL-3.0. Opt-in, read-only local-human training telemetry.
 +// Runs on the command dispatcher's logic thread; no Godot objects or disk IO here.
 +#include "GameLogic/GameLogicDispatch.h"
@@ -2488,6 +2568,7 @@ new file mode 100644
 +#include "GameLogic/System/ShroudManager.h"
 +#include "GameLogic/System/InvisibilityManager.h"
 +#include <cmath>
++#include <exception>
 +#include <locale>
 +#include <sstream>
 +
@@ -2671,6 +2752,19 @@ new file mode 100644
 +	if (!human(p) || message.getType() == MSG_LOGIC_CRC || message.getType() == MSG_SET_REPLAY_CAMERA) return false;
 +	const bool select = message.getType() >= MSG_CREATE_SELECTED_GROUP && message.getType() <= MSG_ADD_TEAM9;
 +	if (!select) captureHumanState(*p, "before_command");
++	if (!select && m_humanPolicyCapture)
++	{
++		const int type=message.getType();
++		const bool supported=type==MSG_DOZER_CONSTRUCT || type==MSG_FOUNDATION_CONSTRUCT || type==MSG_QUEUE_UNIT_CREATE || type==MSG_CANCEL_UNIT_CREATE || type==MSG_QUEUE_UPGRADE || type==MSG_CANCEL_UPGRADE || type==MSG_DO_MOVETO || type==MSG_DO_ATTACK_OBJECT || type==MSG_ENTER || type==MSG_EXIT || type==MSG_EVACUATE || type==MSG_WALL_HUB_CONSTRUCT_SPAN;
++		if (supported)
++		{
++			try {
++				humanRecord("{\"event\":\"human_policy_snapshot\",\"demonstration_schema\":\"bc-demonstration-v1\",\"source\":\"human\",\"capture\":\"pre_dispatch\",\"player\":"+std::to_string(p->getPlayerIndex())+",\"frame\":"+std::to_string(m_logic.getFrame())+",\"command_id\":"+std::to_string(m_humanSequence+1)+",\"payload\":"+m_humanPolicyCapture(p->getPlayerIndex(),type)+"}");
++			} catch (const std::exception &error) {
++				humanRecord("{\"event\":\"demonstration_capture_error\",\"command_id\":"+std::to_string(m_humanSequence+1)+",\"error\":"+quoted(error.what())+"}");
++			}
++		}
++	}
 +	std::ostringstream out; out.imbue(std::locale::classic());
 +	out << "{\"event\":\"human_command\",\"id\":" << ++m_humanSequence << ",\"frame\":" << m_logic.getFrame() << ",\"player\":" << p->getPlayerIndex()
 +		<< ",\"type\":" << message.getType() << ",\"command\":" << quoted(GameMessageTypeName(message.getType())) << ",\"selection_before\":";
@@ -2695,9 +2789,16 @@ new file mode 100644
 +	out << ']';
 +	const GameMessageArgument *templateArg = nullptr;
 +	if (message.getType() == MSG_DOZER_CONSTRUCT || message.getType() == MSG_FOUNDATION_CONSTRUCT) templateArg = message.getArgument(0);
-+	if (message.getType() == MSG_QUEUE_UNIT_CREATE && message.getArgument(0) && message.getArgument(0)->type == ARGUMENTDATATYPE_BOOLEAN && !message.getArgument(0)->boolean) templateArg = message.getArgument(1);
++	if ((message.getType() == MSG_QUEUE_UNIT_CREATE || message.getType()==MSG_CANCEL_UNIT_CREATE) && message.getArgument(0) && message.getArgument(0)->type == ARGUMENTDATATYPE_BOOLEAN && !message.getArgument(0)->boolean) templateArg = message.getArgument(1);
++	if (message.getType()==MSG_WALL_HUB_CONSTRUCT_SPAN) templateArg=message.getArgument(0);
 +	if (templateArg && templateArg->type == ARGUMENTDATATYPE_INTEGER)
 +		if (const ThingTemplate *tt = m_logic.things().findByTemplateID((unsigned short)templateArg->integer)) out << ",\"requested_template\":" << quoted(tt->getName());
++	if (message.getType()==MSG_QUEUE_UPGRADE || message.getType()==MSG_CANCEL_UPGRADE)
++	{
++		const GameMessageArgument *a=message.getArgument(message.getType()==MSG_QUEUE_UPGRADE ? 1 : 0);
++		if (a && a->type==ARGUMENTDATATYPE_INTEGER && TheUpgradeCenter)
++			if (const UpgradeTemplate *upgrade=TheUpgradeCenter->findUpgradeByMaskBit(a->integer)) out << ",\"requested_upgrade\":" << quoted(upgrade->getUpgradeName());
++	}
 +	out << ",\"label_quality\":\"human_attempt_not_verified_good\"}";
 +	humanRecord(out.str()); return true;
 +}

@@ -1,5 +1,6 @@
 """Versioned numeric game facts; no preferred strategy or hidden enemy state."""
 import math
+from feature_cache import cached
 
 ENCODING="rts-mechanics-v1"
 STATE_KEYS=("economy_count","economy_mean_share","income_base_per_second","factories","idle_factories",
@@ -28,6 +29,9 @@ def scaled(value, scale, field="unknown"):
 
 
 def state_features(observation):
+    return cached('mechanics_state',observation,lambda:_state_features(observation))
+
+def _state_features(observation):
     data=observation.get("mechanics",{})
     return [float(data.get("schema")==ENCODING)]+[scaled(data.get(k,0),SCALES.get(k,10.),k) for k in STATE_KEYS]
 

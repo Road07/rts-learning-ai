@@ -40,14 +40,24 @@ static class GameLauncher {
                 if (Hash((string)config[pair[0]])!=(string)config[pair[1]])
                     throw new InvalidOperationException("Dosya doğrulaması başarısız: " + pair[0]);
             string gameFolder=Path.GetDirectoryName((string)config["game_executable"]);
+            string engineVersion="bundled";
+            string engineState=Path.Combine(root,@"AI-Motor-Guncellemeleri\engine-state.json");
+            if (config.ContainsKey("auto_engine_update") && (bool)config["auto_engine_update"] && File.Exists(engineState)) {
+                var selected=json.Deserialize<Dictionary<string,object>>(File.ReadAllText(engineState,Encoding.UTF8));
+                string candidate=Convert.ToString(selected["directory"]);
+                var files=(Dictionary<string,object>)selected["files"];
+                bool valid=true;
+                foreach (var entry in files) { string file=Path.Combine(candidate,entry.Key); if (!File.Exists(file) || Hash(file)!=Convert.ToString(entry.Value)) { valid=false; break; } }
+                if (valid) { gameFolder=candidate; engineVersion=Convert.ToString(selected["version"]); }
+            }
             RequireFile(Path.Combine(gameFolder,"OpenBFME.pck"));
             RequireFile(Path.Combine(gameFolder,"openbfme.windows.template_debug.x86_64.dll"));
             string arguments=Quote(host)+" --config "+Quote(configPath);
             if (check) {
                 File.WriteAllText(Path.Combine(service,"game-launcher-check.json"),json.Serialize(new {
                     ok=true, strict_model_only=true, python=python, host=host, arguments=arguments,
-                    game_executable=config["game_executable"], weights_sha256=config["sha256"],
-                    spend_sha256=config["spend_sha256"], launches_training=false, uses_model=false
+                    game_executable=Path.Combine(gameFolder,"OpenBFME.exe"), engine_version=engineVersion, weights_sha256=config["sha256"],
+                    spend_sha256=config["spend_sha256"], launches_training=false, external_model_required=false
                 }),new UTF8Encoding(false));
                 return 0;
             }

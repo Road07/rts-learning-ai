@@ -53,6 +53,30 @@ var model_access_validation: Dictionary = {}
 var mechanics_validation: Dictionary = {}
 var cp_validation: Dictionary = {}
 var feedback_validation: Dictionary = {}
+var headless_training: bool=false
+var training_pace_us: int=0
+var headless_fast_poll: bool=false
+var profile_enabled: bool=false
+var profile_advance_us: int=0
+var profile_hash_us: int=0
+var profile_hash_count: int=0
+var profile_hash_stride: int=1
+var profile_hashes: FileAccess
+var profile_chain=HashingContext.new()
+
+func model_decision_stride() -> int:
+	return int(config.get("decision_stride",5)) if headless_training else 5
+
+func is_training_headless() -> bool:
+	return headless_training
+
+var benchmark: bool = false
+var benchmark_team: int = 1
+var benchmark_meter = preload("res://scripts/benchmark_meter.gd").new()
+
+func model_should_control(player: int) -> bool:
+	return not benchmark or (training_slot(player)<3 if benchmark_team==1 else training_slot(player)>=3)
+
 
 func model_fixture_reserved_ids() -> Array:
 	if case_name=="learning-feedback": return [int(feedback_validation.get("producer",0)),int(feedback_validation.get("research_producer",0))]
@@ -82,7 +106,7 @@ func training_control() -> void:
 	var frame: int = int(_world.get_frame())
 	if frame-training_lease_frame<25: return
 	training_lease_frame=frame
-	for p in participants.slice(0,3):
+	for p in participants.slice(0,3).filter(func(player): return not player.get("human",false)):
 		require(_world.strategy_training_control(int(p.index),150).get("ok",false),"training purchase lease refused")
 
 func training_finance() -> Dictionary:
@@ -90,7 +114,7 @@ func training_finance() -> Dictionary:
 	var military = 0.0
 	var money = 0.0
 	var economy: Array = _world.get_economy().get("players",[])
-	for p in participants.slice(0,3):
+	for p in participants.slice(0,3).filter(func(player): return not player.get("human",false)):
 		for row in economy:
 			if int(row.index)==int(p.index):
 				earned+=float(row.earned)
@@ -109,7 +133,7 @@ func training_slot(player: int) -> int:
 # Track initial assets only: newly spawned/recruited objects cannot inflate this score.
 func training_assets() -> Array:
 	var assets: Array = []
-	for p in participants.slice(0,3):
+	for p in participants.slice(0,3).filter(func(player): return not player.get("human",false)):
 		var obs: Dictionary = _world.strategy_observation(int(p.index))
 		for object in preload("res://scripts/team_ai/contracts.gd").objects(obs,"self"):
 			if not object.get("complete",true): continue
@@ -157,7 +181,17 @@ func boot():
 		if arg.begins_with("--arena-report="): report_path=arg.substr(15)
 		if arg=="--arena-view": view=true
 		if arg.begins_with("--arena-screenshot="): screenshot_path=arg.substr(19)
+	headless_training=args.has("--arena-headless-training")
+	headless_fast_poll=headless_training and OS.get_environment("OPENBFME_HEADLESS_FAST_POLL")=="1"
+	if headless_fast_poll:
+		OS.low_processor_usage_mode=false
+		OS.low_processor_usage_mode_sleep_usec=0
+		Engine.max_fps=0
+	profile_enabled=headless_training and OS.get_environment("OPENBFME_INFERENCE_PROFILE")=="1"
+	profile_hash_stride=maxi(1,int(OS.get_environment("OPENBFME_PROFILE_HASH_STRIDE")))
 	config=JSON.parse_string(FileAccess.get_file_as_string("res://data/arena.json"))
+	benchmark=bool(config.get("benchmark",false))
+	benchmark_team=int(config.get("benchmark_team",1))
 	var fs=ClassDB.instantiate("RetailFileSystem")
 	fs.set_mods(PackedStringArray([mod_path]))
 	if not require(fs.mount_retail_paths("D:/Games/RotWK","D:/Games/BFME2").ok,"retail mount failed"): finish(); return
@@ -190,9 +224,11 @@ func boot():
 	if not require(participants.size()==6,"expected six computer players"): finish(); return
 	if OS.get_environment("OPENBFME_MODEL_ONLY")=="1":
 		for p in participants:
+			if p.get("human",false) or not model_should_control(int(p.index)): continue
 			require(_world.strategy_model_control(int(p.index),true).get("ok",false),"model-only authority refused")
 	training_control()
-	for p in participants: seed_player(p)
+	if not benchmark:
+		for p in participants: seed_player(p)
 	seed_case()
 	if not errors.is_empty(): finish(); return
 	for i in 3: _world.advance(0.2)
@@ -202,7 +238,7 @@ func boot():
 		if not farms.is_empty(): _world.damage_object(int(farms[0].id),float(_world.get_object(int(farms[0].id)).max_health)*2)
 		_world.advance(0.2)
 	# Focus fixtures add hostile units too: preserve legal command-point headroom.
-	for p in participants:
+	for p in ([] if benchmark else participants):
 		if p.get("human",false): continue
 		var caps: Array = _world.get_economy().get("players",[]).filter(func(row): return int(row.index)==int(p.index))
 		for attempt in 6:
@@ -212,6 +248,7 @@ func boot():
 			spawn(str(config.factions[p.faction].farm),p,p.home+Vector2(850+attempt*180,-700),true)
 			_world.advance(0.2)
 		fit_fixture_command_points(p)
+	if benchmark: benchmark_meter.start(self,report_path.get_base_dir()+"/benchmark-telemetry.jsonl")
 	initial=sample()
 	if OS.get_environment("OPENBFME_AI_TRAINING")=="1":
 		training_initial=training_assets()
@@ -369,6 +406,9 @@ func issue_human_probe():
 
 func _process(delta):
 	if finished: return
+	if headless_training:
+		headless_training_step()
+		return
 	if case_name=="sequence" and sequence_validation.is_empty(): probe_sequence()
 	if not paused:
 		training_control()
@@ -379,6 +419,9 @@ func _process(delta):
 			step=minf(0.2 if first_step else step,float(sim_start+sim_frames-int(_world.get_frame()))/5.0)
 		_world.advance(maxf(0.0,step))
 		driver.tick()
+		if benchmark:
+			benchmark_meter.poll(self)
+			if bool(_world.get_victory_report().get("single_alliance",false)): finish(); return
 		training_verify_purchases()
 		if case_name=="access": preload("res://scripts/model_access_checks.gd").poll(self,model_access_validation)
 		if sim_frames>0 and int(_world.get_frame())>=sim_start+sim_frames: finish(); return
@@ -402,6 +445,44 @@ func _process(delta):
 			capturing=true
 			capture_preview()
 	elif sim_frames<=0 and Time.get_ticks_msec()-started>=int(seconds*1000): finish()
+
+
+func headless_training_step() -> void:
+	if sim_start<0:
+		sim_start=int(_world.get_frame())
+		training_pace_us=Time.get_ticks_usec()
+		if profile_enabled:
+			profile_hashes=FileAccess.open(report_path+".hashes.jsonl",FileAccess.WRITE)
+			profile_chain.start(HashingContext.HASH_SHA256)
+			if not require(profile_hashes!=null,"profile hash file unavailable"): finish();return
+	# Async HTTP transport runs normally, but native time is held until the
+	# response is applied. No stochastic action is dropped because of speed.
+	if not driver.pending.is_empty():
+		if headless_fast_poll:OS.delay_usec(500)
+		return
+	driver.tick()
+	if not driver.pending.is_empty(): return
+	var frame: int=int(_world.get_frame())
+	var due: int=training_pace_us+int(float(frame-sim_start)*200000.0/speed)
+	if Time.get_ticks_usec()<due:
+		OS.delay_usec(mini(1000,due-Time.get_ticks_usec()))
+		return
+	training_control()
+	var advance_started: int=Time.get_ticks_usec()
+	_world.advance(0.2)
+	profile_advance_us+=Time.get_ticks_usec()-advance_started
+	if profile_enabled and ((int(_world.get_frame())-sim_start)%profile_hash_stride==0 or int(_world.get_frame())>=sim_start+sim_frames):
+		var hash_started: int=Time.get_ticks_usec()
+		var line=JSON.stringify({"frame":int(_world.get_frame()),"hash":str(_world.get_state_hash())})
+		profile_hashes.store_line(line)
+		profile_chain.update((line+"\n").to_utf8_buffer())
+		profile_hash_us+=Time.get_ticks_usec()-hash_started
+		profile_hash_count+=1
+	if not require(int(_world.get_frame())==frame+1,"headless step did not advance exactly one frame"): finish();return
+	training_verify_purchases()
+	var victory: Dictionary=_world.get_victory_report()
+	if victory.get("single_alliance",false) and not victory.get("events",[]).filter(func(e): return e.kind=="alliance_victory").is_empty(): finish();return
+	if int(_world.get_frame())>=sim_start+sim_frames: finish()
 
 func capture_preview():
 	await RenderingServer.frame_post_draw
@@ -482,6 +563,13 @@ func finish():
 	var result={"schema":1,"ok":errors.is_empty(),"stage":stage,"case":case_name,"seed":config.get("seed",0),"model":model,"errors":errors,"fixtures":fixtures,"initial":initial,"scope":"3v3 prepared-state runtime smoke; does not certify behavior or long-match balance; middle/late phase timers compressed only in test mod; no seeded spellbook points or researched unit upgrades"}
 	if _world!=null:
 		result["frame"]=_world.get_frame()
+		if headless_training:result["headless_training"]={"enabled":true,"time_scale":speed,"requested_simulation_seconds":float(sim_frames)/5.0,"simulation_seconds":float(int(_world.get_frame())-sim_start)/5.0,"synchronous_decisions":true,"render_enabled":false,"ui_enabled":false}
+		if profile_enabled:
+			if profile_hashes!=null:profile_hashes.close()
+			result["inference_profile"]={"simulation_wall_seconds":float(Time.get_ticks_usec()-training_pace_us)/1000000.0,"native_advance_seconds":float(profile_advance_us)/1000000.0,"hash_seconds":float(profile_hash_us)/1000000.0,"hash_samples":profile_hash_count,"hash_stride":profile_hash_stride,"fast_poll":headless_fast_poll,"headless_idle_sleep_usec":OS.low_processor_usage_mode_sleep_usec,"godot_max_fps":Engine.max_fps,"state_hash":str(_world.get_state_hash()),"hash_chain_sha256":profile_chain.finish().hex_encode(),"hashes":report_path+".hashes.jsonl"}
+		if benchmark:
+			benchmark_meter.poll(self,true)
+			result["benchmark"]={"schema":"fixed-native-benchmark-v1","model_team":benchmark_team,"model_players":participants.filter(func(p): return model_should_control(int(p.index))).map(func(p): return int(p.index)),"native_players":participants.filter(func(p): return not model_should_control(int(p.index))).map(func(p): return int(p.index)),"victory":_world.get_victory_report(),"telemetry":benchmark_meter.path,"difficulty":"Brutal","fixtures":false}
 		result["simulation_window"]={"start":sim_start,"end":int(_world.get_frame()),"budget":sim_frames,"fixed":sim_frames>0}
 		result["mechanics_validation"]=mechanics_validation
 		result["cp_validation"]=cp_validation
@@ -510,9 +598,10 @@ func finish():
 		if OS.get_environment("OPENBFME_MODEL_ONLY")=="1":
 			var controlled: Array = []
 			for p in participants:
-				controlled.append({"player":p.index,"model_only":_world.strategy_observation(int(p.index)).get("model_only_control",false)})
+				if p.get("human",false): continue
+				controlled.append({"player":p.index,"model_only":_world.strategy_observation(int(p.index)).get("model_only_control",false),"expected":model_should_control(int(p.index))})
 			result["model_only_validation"]={"players":controlled,"fallbacks":driver.fallbacks if driver!=null else -1}
-			for p in controlled: require(bool(p.model_only),"native model-only control lost")
+			for p in controlled: require(bool(p.model_only)==bool(p.expected),"model/native authority mismatch")
 		if OS.get_environment("OPENBFME_AI_TRAINING")=="1":
 			result["training"]={"reward_version":"bfme-outcome-reward-v3","initial":training_initial,"final":training_assets(),"initial_finance":training_initial_finance,"final_finance":training_finance(),"truncated":true,"terminal_win":false}
 	if driver!=null:

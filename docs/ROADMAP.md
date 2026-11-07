@@ -1,5 +1,13 @@
 # Yol haritası / Roadmap
 
+2026-11-08: Gymnasium ve ayrı MaskablePPO ekonomi göreviyle dar öğrenme
+deneyinin altyapısı hazırlandı; kısa çalışma/log/eşitlik kontrolleri geçti.
+Tam eğitim/değerlendirme ve öğrenme başarısı henüz doğrulanmadı.
+
+Gymnasium and the separate MaskablePPO economy task provide infrastructure
+for the narrow learning experiment. Short execution/log/equality checks
+passed; full training/evaluation and successful learning remain unverified.
+
 ## Türkçe
 
 Amaç, kendi yerel karar modelimizle deneyimlerinden öğrenen ve ileride başka RTS oyunlarına uyarlanabilen bir AI çekirdeği geliştirmek. İlk ortam OpenBFME + RotWK 2.01, öncelik 3v3.

@@ -55,7 +55,18 @@ Bunlar öğrenmeyi ölçmek için altyapıdır. Meta bilgisi, güçlü strateji,
 
 [İlerleme planı / Roadmap](docs/ROADMAP.md) · [Güncel ödül kapsamı](tools/local_strategy/training/LEARNING-FEEDBACK-V3.md)
 
-## Kaynakların kullanımı
+## 8 Kasım 2026: eğitim altyapısı
+
+- Gerçek OpenBFME simülasyonunu saran `OpenBFME-v0` Gymnasium ortamı ve yasal eylem maskeleri.
+- Terminal zafer/yenilgi ödülünü koruyan potansiyel tabanlı yoğun ödül; gizli rakip bilgisi yalnız ödül hesabında, gözlemde değil.
+- Mevcut oyun modelinden ayrı, standart MaskablePPO ile 180 saniyelik ekonomi görevi; sabit değerlendirme seedleri, CSV ve TensorBoard.
+- Daha hafif ortam işçileri, hash doğrulamalı paket önbelleği, bellek koruması ve bölüm/ödül bileşeni logları.
+- Kalıcı oyun süreci reseti ve ortak attention/GRU modeli ayrı deneysel yollardır; varsayılan oyun modeline aktarılmış sayılmaz.
+
+Kısa kontroller akışın çalıştığını gösterir. Tam eğitim, oyun becerisi, uzun süreli kararlılık ve başka bilgisayarlarda kurulum henüz doğrulanmış değildir.
+[Ayrıntılar ve ölçüm sınırları](docs/EXPERIMENTS.md).
+
+### Kurulum kapsamı
 
 Bu bir araştırma kaynak anlık görüntüsüdür. Yerel klasör varsayımları,
 paketleme yardımcıları ve eski iç bağımlılıklar vardır; başka bilgisayarda

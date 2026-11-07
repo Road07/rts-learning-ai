@@ -1,0 +1,4 @@
+-r ../requirements-gymnasium.txt
+stable-baselines3==2.9.0
+sb3-contrib==2.9.0
+tensorboard==2.20.0

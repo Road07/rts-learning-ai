@@ -13,9 +13,28 @@ var last_flush := 0
 var outcome_written := false
 var disabled := false
 var active_world: Node
+var policy_builder: Node
 
 func write_raw(raw: String) -> void:
 	if file == null: return
+	if raw.contains('"human_policy_snapshot"'):
+		var snapshot=JSON.parse_string(raw)
+		if snapshot is Dictionary and snapshot.get("event","")=="human_policy_snapshot":
+			var observation: Dictionary=snapshot.get("payload",{}).get("observation",{})
+			if is_instance_valid(policy_builder) and policy_builder.has_method("options") and observation.get("ok",false) and observation.has("spell_points") and observation.has("map_extent") and int(observation.get("observed_frame",-1))==int(snapshot.get("frame",-2)):
+				# Only immutable pre-command observation plus the map's fixed extent;
+				# never rebuild dynamic state from the world at record-drain time.
+				var spec: Dictionary=policy_builder.options(observation,true)
+				spec.summary["decision_frame"]=snapshot.frame
+				snapshot["policy_observation"]=spec.summary
+				snapshot["tactical_candidates"]=spec.candidates
+				snapshot["spend_candidates"]=snapshot.payload.get("spend_candidates",[])
+				snapshot["feature_encoding"]="rts-mechanics-v1+bfme-public-rules-v2+native-queue-v1"
+				snapshot["game_rules_sha256"]=OS.get_environment("OPENBFME_GAME_RULES_SHA256")
+				snapshot["candidate_policy"]=snapshot.payload.get("candidate_policy","unknown")
+				snapshot["policy_available"]=true
+			else: snapshot["policy_available"]=false
+			raw=JSON.stringify(snapshot)
 	if file.get_position() >= 8*1024*1024:
 		file.close()
 		part += 1
@@ -44,6 +63,7 @@ func tick(game: Node, permitted: bool) -> void:
 	var records: PackedStringArray = world.human_training_records(true)
 	if file == null and not records.is_empty():
 		folder = OS.get_executable_path().get_base_dir().path_join("human-logs")
+		if not OS.get_environment("OPENBFME_AI_LOG_ROOT").is_empty(): folder=OS.get_environment("OPENBFME_AI_LOG_ROOT").path_join("human-logs")
 		if DirAccess.make_dir_recursive_absolute(folder) != OK:
 			disabled = true
 			world.human_training_records(false)

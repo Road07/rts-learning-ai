@@ -1,3 +1,11 @@
+> Başsız eğitim güncellemesi (2026-11-06): AI-Otomatik-Egitim.exe varsayılan
+> başsız 10x hedef hız kullanır. 3/5/15/30 dakika artık oyun/simülasyon süresidir;
+> gerçek süre donanım, yükleme ve çıkarıma bağlıdır. Eski aşağıdaki duvar-zamanı
+> açıklamaları yalnız legacy CLI için geçerlidir. Her tur/eş değerlendirme özel
+> runtime/PCK ve log klasöründedir; karar yanıtında simülasyon bekler. Aynı
+> EpisodePolicy/olasılık, action-credit-v3, faction bankaları ve tamamlanan
+> tur aktivasyonu korunur. Bu yeni PyTorch/PPO'ya geçiş değildir.
+
 # Tek tıkla sürekli eğitim
 
 Oyun klasöründeki **AI-Otomatik-Egitim.exe** açıldığında tur süresini

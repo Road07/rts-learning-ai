@@ -11,7 +11,14 @@ ALIASES = {'baslangic':'opening','orta':'middle','son':'late','hepsi':'all'}
 
 def prepare(config):
     DEST.mkdir(exist_ok=True)
-    entries = dict(pck_entries((ROOT/'AI-Genel/OpenBFME.pck').read_bytes()))
+    engine_folder=None
+    if os.environ.get('OPENBFME_ENGINE_CANDIDATE'):
+        engine_folder=Path(os.environ['OPENBFME_ENGINE_CANDIDATE'])
+    elif os.environ.get('OPENBFME_ENGINE_FROZEN')!='1':
+        from engine_update import active
+        current=active()
+        if current:engine_folder=Path(current['directory'])
+    entries = dict(pck_entries(((engine_folder/'arena-base.pck') if engine_folder else ROOT/'AI-Genel/OpenBFME.pck').read_bytes()))
     # Always use current source scripts, rather than a possibly stale deployed controller.
     for name in ['general_strategy.gd','strategic_support.gd','combat_policy.gd','rescue_order_policy.gd','human_training_log.gd']:
         entries['scripts/'+name] = (HERE.parent/name).read_bytes()
@@ -28,6 +35,17 @@ def prepare(config):
     templates = re.findall(r'(?m)^PlayerTemplate\s+(\w+)',mount.get(r'data\ini\playertemplate.ini').decode('latin1'))
     config['template_indices'] = {name:templates.index(name) for name in config['factions']}
     entries['data/arena.json'] = json.dumps(config,ensure_ascii=False).encode('utf-8')
+    entries['scripts/benchmark_meter.gd'] = (HERE/'benchmark_meter.gd').read_bytes()
+    if config.get('headless_training'):
+        release='scripts/release/release.gd'
+        if release in entries:
+            text=entries[release].decode('utf-8')
+            for marker in ['func _init() -> void:\n','func _ready() -> void:\n']:
+                if text.count(marker)!=1:raise ValueError('Release lifecycle changed')
+                guard='\tif OS.get_cmdline_user_args().has("--arena-headless-training"): '
+                guard+=('set_process(false); return\n' if '_ready' in marker else 'return\n')
+                text=text.replace(marker,marker+guard,1)
+            entries[release]=text.encode('utf-8')
     entries['scripts/arena.gd'] = (HERE/'arena.gd').read_bytes()
     entries['scripts/arena_competitive_checks.gd'] = (HERE/'competitive_checks.gd').read_bytes()
     entries['scripts/support_dispatch_checks.gd'] = (HERE/'support_dispatch_checks.gd').read_bytes()
@@ -37,15 +55,16 @@ def prepare(config):
     entries['scenes/game.tscn'] = b'[gd_scene load_steps=2 format=3]\n[ext_resource type="Script" path="res://scripts/arena.gd" id="1"]\n[node name="Arena" type="Node3D"]\nscript = ExtResource("1")\n'
     (DEST/'OpenBFME.pck').write_bytes(pack(list(entries.items())))
     for name in ['OpenBFME.exe','OpenBFME.console.exe']:
-        if not (DEST/name).exists(): shutil.copy2(ROOT/name,DEST/name)
-    native = ROOT/'ai-mod-source/godot/bin/openbfme.windows.template_debug.x86_64.dll'
+        origin=(engine_folder or ROOT)/name
+        if not (DEST/name).exists() or hashlib.sha256((DEST/name).read_bytes()).digest()!=hashlib.sha256(origin.read_bytes()).digest():shutil.copy2(origin,DEST/name)
+    native = (engine_folder/'openbfme.windows.template_debug.x86_64.dll') if engine_folder else ROOT/'ai-mod-source/godot/bin/openbfme.windows.template_debug.x86_64.dll'
     shutil.copy2(native,DEST/native.name)
-    source = (ROOT/'AI-Genel/ai-mod/data/ini/default/skirmishaidata.ini').read_bytes().decode('latin1')
-    if os.environ.get('OPENBFME_AI_BACKEND') == 'decision_net_v0':
+    source = mount.get(r'data\ini\default\skirmishaidata.ini').decode('latin1') if config.get('benchmark') else (ROOT/'AI-Genel/ai-mod/data/ini/default/skirmishaidata.ini').read_bytes().decode('latin1')
+    if not config.get('benchmark') and os.environ.get('OPENBFME_AI_BACKEND') == 'decision_net_v0':
         source = source.replace('EnhancedCounterProduction = Yes', 'EnhancedCounterProduction = Yes\n\tClassicOpening = Yes')
     for stage, values in config['stages'].items():
         ini = source
-        for key,value in [('Rush',values['rush_duration']),('MidGame',values['mid_duration'])]:
+        for key,value in ([] if config.get('benchmark') else [('Rush',values['rush_duration']),('MidGame',values['mid_duration'])]):
             ini, count = re.subn(r'(PhaseDuration_'+key+r'\s*=\s*)[0-9.]+',lambda m:m[1]+str(value),ini)
             if count < 7: raise RuntimeError('Missing phase timing fields: '+key)
         path = DEST/'mods'/stage/'data/ini/default/skirmishaidata.ini'
@@ -54,11 +73,16 @@ def prepare(config):
     return {'native_sha256':hashlib.sha256(native.read_bytes()).hexdigest(),'package_sha256':hashlib.sha256((DEST/'OpenBFME.pck').read_bytes()).hexdigest()}
 
 def main():
+    global DEST
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('stage',nargs='?',default='opening')
     parser.add_argument('--case',choices=['baseline','pressure','counters','tunnels','hero','siege','team','human-log','sequence','production','access','mechanics','cp-accounting','learning-feedback'],default='baseline')
     parser.add_argument('--seconds',type=float,default=6)
     parser.add_argument('--speed',type=float,default=4)
+    parser.add_argument('--headless-training',action='store_true')
+    parser.add_argument('--workspace',type=Path)
+    parser.add_argument('--decision-stride',type=int,choices=[5,10,15,20],default=5)
+    parser.add_argument('--benchmark-team',type=int,choices=[1,2])
     parser.add_argument('--sim-frames',type=int,default=0,help='Fixed logic-frame budget for paired evaluation.')
     parser.add_argument('--seed',type=int)
     parser.add_argument('--output-dir',type=Path,help='Private report directory for a training episode.')
@@ -69,13 +93,21 @@ def main():
     args=parser.parse_args()
     args.stage=ALIASES.get(args.stage,args.stage)
     if args.stage not in ['opening','middle','late','all']: parser.error('stage: baslangic/orta/son/hepsi')
-    if not 1 <= args.seconds <= 1800 or not 0.25 <= args.speed <= 16: parser.error('seconds: 1..1800; speed: 0.25..16')
+    if not 1 <= args.seconds <= 1800 or not 0.25 <= args.speed <= (100 if args.headless_training else 16): parser.error('seconds: 1..1800; speed: 0.25..16')
     if (args.view or args.screenshot) and args.stage=='all': parser.error('View one stage at a time.')
     config=json.loads((HERE/'scenarios.json').read_text(encoding='utf-8'))
     if args.seed is not None: config['seed']=args.seed
     if args.factions:
         config['slots']=args.factions.split(',')
         if len(config['slots'])!=6 or any(f not in config['factions'] for f in config['slots']): parser.error('Supply six known factions.')
+    if args.benchmark_team:
+        if args.stage!='opening' or args.case!='baseline':parser.error('Benchmark requires opening/baseline')
+        config['benchmark']=True;config['benchmark_team']=args.benchmark_team
+    if args.headless_training:
+        if args.view or args.screenshot or not args.workspace or args.sim_frames<=0:parser.error('Headless training needs a private workspace and simulation frame budget')
+        config['headless_training']=True
+        config['decision_stride']=args.decision_stride
+    if args.workspace:DEST=args.workspace.resolve()
     identity=prepare(config)
     run_dir=args.output_dir.resolve() if args.output_dir else DEST/'results'/(time.strftime('%Y%m%d-%H%M%S')+'-'+str(os.getpid()))
     run_dir.mkdir(parents=True)
@@ -85,7 +117,9 @@ def main():
         report=run_dir/(stage+'.json')
         command=[str(DEST/'OpenBFME.console.exe')]
         if not args.view and not args.screenshot: command+=['--headless']
+        if args.headless_training:command+=['--disable-render-loop','--audio-driver','Dummy']
         command+=['--','--no-update-check','-mod',str(DEST/'mods'/stage),'--arena-stage='+stage,'--arena-case='+args.case,'--arena-seconds='+str(args.seconds),'--arena-speed='+str(args.speed),'--arena-model='+args.model,'--arena-report='+str(report)]
+        if args.headless_training:command+=['--arena-headless-training']
         if args.view: command+=['--arena-view']
         if args.sim_frames: command+=['--arena-sim-frames='+str(args.sim_frames)]
         if args.screenshot: command+=['--arena-view','--arena-screenshot='+str(run_dir/(stage+'.png'))]
@@ -105,6 +139,7 @@ def main():
         result['script_errors']=len(re.findall('SCRIPT ERROR:',log_text))
         result['model_backend'] = os.environ.get('OPENBFME_AI_BACKEND', 'model' if args.model == 'on' else 'off')
         result.update(identity)
+        result['telemetry_directory']=str(DEST/'logs')
         result['exit_code']=code
         result['ok']=bool(result.get('ok')) and code==0 and result['script_errors']==0
         if args.case == 'human-log':

@@ -54,3 +54,24 @@ değildir. Fixture/değerlendirme verisiyle gradient güncellemesi yapılmadı.
 Kanıt: `ai-mod-source/research-credit-v3-verification.json`.
 Sonraki aşama gerçek öğrenen oyuncuların yeni politikayla aldığı kredi ve
 eğitim dışında tekrarlanan davranış değişimidir; henüz kanıtlanmadı.
+
+## Öğrenen oyuncu geri bildirim kapsamı
+
+`service/feedback_audit.py` salt okunur `decision-feedback-audit-v1` raporu
+üretir. Her arena bölümü feedback-audit.json yazar; experience ve eğitim
+turu raporu da aynı özeti taşır. Oyuncu/fraksiyon/head, seçilen/gönderilen
+komutlar, çok seçenekli sample kararları, eşleşen kredi, olgunlaşma ve
+sıfırdan farklı yerel/terminal geri bildirim ayrıdır. Bütün oyuncuların
+kredi bileşenleri learner bayrağıyla gösterilir; rakipte ölçülen olay
+öğrencinin öğrenme sinyali sayılmaz.
+
+Sıfır kredi; gönderim yok, kredi eşleşmesi yok, zaman ufku dolmamış,
+olgunlaşmış ama ölçülen yerel etki yok veya bileşenler birbirini götürüyor
+olarak ayrılır. Sonuç bulunmaması stratejik doğru/yanlış etiketi değildir.
+Bu rapor ödül, gradient, seçim olasılığı veya model ağırlığını değiştirmez.
+
+17 ilgili kontrol ve tek 6 saniyelik middle/learning-feedback örnekleme
+kontrolü geçti. 24 gerçek örneklenmiş model seçimi gönderim/kredi kaydıyla
+eşleşti; 21 karar olgunlaşmamış, 3 kararda ölçülen yerel etki yok. Eğitim
+güncellemesi/aktivasyon yapılmadı. Bu sonuç öğrenme başarısı değildir.
+Kanıt: ai-mod-source/feedback-coverage-verification.json.

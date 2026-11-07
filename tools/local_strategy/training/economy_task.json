@@ -1,0 +1,17 @@
+{
+  "schema": "economy-task-v1",
+  "name": "economy-easy-180",
+  "duration": 180,
+  "map_name": "maps/map wor lostriand/map wor lostriand.map",
+  "factions": ["FactionDwarves", "FactionMen"],
+  "positions": [0, 5],
+  "agent_index": 0,
+  "native_difficulty": "easy",
+  "time_scale": 10,
+  "a": 0.0001,
+  "b": 0.01,
+  "c": 0.0001,
+  "gamma": 0.99,
+  "evaluation_seeds": [831001, 831002, 831003, 831004, 831005],
+  "training_seed": 615000
+}

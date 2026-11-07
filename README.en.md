@@ -57,7 +57,18 @@ These are tools for measuring learning. Meta adaptation, strong strategy, compet
 
 [Roadmap / İlerleme planı](docs/ROADMAP.md) · [Current reward scope](tools/local_strategy/training/LEARNING-FEEDBACK-V3.md)
 
-## Using the sources
+## November 8, 2026: training infrastructure
+
+- The `OpenBFME-v0` Gymnasium adapter controls the real native simulator through legal action masks.
+- Potential-based dense rewards retain terminal victory/defeat rewards; privileged opponent statistics stay out of policy observations.
+- A separate stock MaskablePPO economy task uses 180-second episodes, held-out evaluation seeds, CSV and TensorBoard. It does not replace the gameplay model.
+- Lightweight environment workers, hash-verified package caching, memory guards and episode/reward-component logging support local experiments.
+- Persistent native-process resets and the shared attention/GRU architecture remain separate experimental paths, not automatically deployed gameplay features.
+
+Short checks establish execution and bounded regression coverage, not successful full training, stronger play, long-term stability or portable installation.
+[Experiment details and measurement limits](docs/EXPERIMENTS.md).
+
+### Installation scope
 
 This is a research source snapshot. Packaging helpers still contain local
 directory assumptions and legacy internal dependencies. A portable,

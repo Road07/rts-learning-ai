@@ -7,26 +7,30 @@ const M = preload("res://scripts/team_ai/mechanics_observation.gd")
 var model_controlled: Dictionary = {}
 var reward_sensor = preload("res://scripts/team_ai/reward_sensor.gd").new()
 var closed_training_matches: Dictionary = {}
+var inference_profile: bool=false
 
 func training_match_id() -> String:
 	return diagnostics.session+":"+str(epoch)
 
 func setup(owner_game: Node) -> void:
 	game=owner_game
+	inference_profile=OS.get_environment("OPENBFME_INFERENCE_PROFILE")=="1"
+	human_log.policy_builder=self
 	diagnostics.open_session()
 	perf.logbook=diagnostics
 	team_ai.config=JSON.parse_string(FileAccess.get_file_as_string("res://scripts/team_ai/tuning.json"))
 	team_ai.mapper.logbook=diagnostics
 	team_ai.mapper.sequence.logbook=diagnostics
-	http=preload("res://scripts/team_ai/model_client.gd").new()
+	http=preload("res://scripts/team_ai/persistent_client.gd").new() if OS.get_environment("OPENBFME_PERSISTENT_HTTP")=="1" else preload("res://scripts/team_ai/model_client.gd").new()
 	http.timeout=8
 	add_child(http)
 	http.request_completed.connect(response)
-	var layer=CanvasLayer.new()
-	add_child(layer)
-	hud=preload("res://scripts/team_ai/hud.gd").new()
-	layer.add_child(hud)
-	label=hud.status_line
+	if not (game.has_method("is_training_headless") and game.is_training_headless()):
+		var layer=CanvasLayer.new()
+		add_child(layer)
+		hud=preload("res://scripts/team_ai/hud.gd").new()
+		layer.add_child(hud)
+		label=hud.status_line
 	team_ai_ready=true
 	get_tree().root.close_requested.connect(func(): human_log.close("window_closed"))
 	diagnostics.write("controller_start",{"mode":"model_only","native_brain":false,"scripted_decisions":false,"fallback":false,"command_encoding":"spend-v2"})
@@ -56,13 +60,15 @@ func tick() -> void:
 	if not allowed(): return
 	var frame: int = int(game._world.get_frame())
 	if frame<last_frame: reset()
-	if frame-last_frame<5 and last_frame>=0: return
+	var stride: int=int(game.model_decision_stride()) if game.has_method("model_decision_stride") else 5
+	if frame-last_frame<stride and last_frame>=0: return
 	last_frame=frame
 	was_playing=true
 	var started=Time.get_ticks_usec()
 	if bots.is_empty():
 		for player in game._world.get_economy().get("players",[]):
 			if not player.get("playable",false): continue
+			if game.has_method("model_should_control") and not game.model_should_control(int(player.index)): continue
 			var obs: Dictionary = game._world.strategy_observation(int(player.index))
 			if not obs.get("ok",false): continue # excludes humans/observers
 			var result: Dictionary = game._world.strategy_model_control(int(player.index),true)
@@ -80,15 +86,16 @@ func tick() -> void:
 			var bot: Dictionary = bots[next_bot%bots.size()]
 			next_bot+=1
 			if frame-int(last_request.get(bot.index,-1000))<25: continue
-			request_plan(bot,frame)
+			if OS.get_environment("OPENBFME_BATCH_WIRE")=="1":request_same_frame([bot],frame)
+			else:request_plan(bot,frame)
 			break
 	perf.record(frame,float(Time.get_ticks_usec()-started)/1000.0,0,0,0,game._world)
 
-func options(obs: Dictionary) -> Dictionary:
+func options(obs: Dictionary, snapshot_only: bool = false) -> Dictionary:
 	var own: Array = C.objects(obs,"self")
 	var enemies: Array = C.objects(obs,"enemy")
 	var army: Array = M.army(own)
-	if game.has_method("model_fixture_reserved_ids"):
+	if not snapshot_only and game.has_method("model_fixture_reserved_ids"):
 		var reserved: Array = game.model_fixture_reserved_ids()
 		army=army.filter(func(o): return int(o.id) not in reserved)
 	var bases: Array = own.filter(func(o): return o.get("base",false))
@@ -105,7 +112,8 @@ func options(obs: Dictionary) -> Dictionary:
 			candidates.append({"id":"attack_%d" % int(enemy.id),"kind":"attack","units":ids,"target":int(enemy.id),"x":enemy.x,"y":enemy.y,"description":"Attack a visible %s; nearby enemy groups %d, available own groups %d readiness=1.00" % ["structure" if enemy.get("structure",false) else "enemy army",enemies.size(),ids.size()]})
 		for ally in C.objects(obs,"ally").filter(func(o): return o.get("base",false)):
 			candidates.append({"id":"help_%d" % int(ally.id),"kind":"help","units":ids,"target":int(ally.id),"x":ally.x,"y":ally.y,"description":"Move owned army to an allied base; available own groups %d" % ids.size()})
-		var extent: Dictionary = game._world.get_census()
+		var extent: Dictionary = obs.get("map_extent",{})
+		if extent.is_empty() and not snapshot_only: extent=game._world.get_census()
 		for x in [0.2,0.5,0.8]:
 			for y in [0.2,0.5,0.8]:
 				candidates.append({"id":"scout_%d" % candidates.size(),"kind":"scout","units":[int(ids[0])],"target":0,"x":float(extent.extent_x)*x,"y":float(extent.extent_y)*y,"description":"Move one group to a public map coordinate to explore; available own groups 1"})
@@ -119,23 +127,64 @@ func options(obs: Dictionary) -> Dictionary:
 		if object.get("structure",false): buildings[str(object.template)]=int(buildings.get(str(object.template),0))+1
 	var summary: Dictionary = {"model_only":true,"player_index":obs.player_index,"faction":obs.faction,"money":obs.money,"cp_free":int(obs.cp_limit)-int(obs.cp_used),"army_groups":army.size(),"home_emergency":false,"home_threat_groups":enemies.filter(func(o): return not o.get("structure",false) and Vector2(o.x,o.y).distance_to(home)<1100).size(),"visible_enemy_groups":enemies.filter(func(o): return not o.get("structure",false)).size(),"own_composition":composition(army),"visible_enemy_composition":composition(enemies),"own_buildings":buildings,"human_state_features":preload("res://scripts/team_ai/human_state_context.gd").collect(obs)}
 	if OS.get_environment("OPENBFME_AI_TRAINING")=="1" and game.has_method("training_slot"): summary["training_slot"]=game.training_slot(int(obs.player_index))
-	summary["spell_points"]=game._world.get_spellbook(int(obs.player_index)).get("points",0)
+	summary["spell_points"]=obs.get("spell_points",0) if snapshot_only or obs.has("spell_points") else game._world.get_spellbook(int(obs.player_index)).get("points",0)
 	summary["match_id"]=training_match_id()
 	summary["diagnostic_session"]=diagnostics.session
 	summary["decision_frame"]=int(obs.observed_frame)
 	summary["mechanics"]=M.collect(obs,home)
+	summary["entity_state"]=M.entity_state(obs)
 	summary.mechanics["spell_points"]=summary.spell_points
 	summary["home_emergency"]=float(summary.mechanics.home_threat_value)>0
 	for candidate in candidates: M.annotate(candidate,obs)
 	return {"summary":summary,"candidates":candidates.slice(0,64),"army":army,"home":home}
 
-func request_plan(bot: Dictionary, frame: int) -> void:
+func request_same_frame(ready_bots: Array, frame: int) -> void:
+	# Caller supplies only bots already due at this frame. Never pull future turns
+	# forward: the default staggered scheduler above supplies exactly one bot.
+	if not pending.is_empty() or ready_bots.is_empty() or ready_bots.size()>8:return
+	var requests: Array=[]
+	var contexts: Array=[]
+	var seen: Dictionary={}
+	for bot in ready_bots:
+		if seen.has(bot.index):return
+		seen[bot.index]=true
+	for bot in ready_bots:
+		var payload: Dictionary=request_plan(bot,frame,true)
+		if payload.is_empty():continue
+		requests.append(payload)
+		contexts.append(pending.duplicate(true))
+	if requests.is_empty():
+		pending.clear()
+		return
+	var serialization_started: int=Time.get_ticks_usec()
+	var body: String=JSON.stringify({"model":"openbfme-decision-net-v0","requests":requests})
+	var serialization_ms: float=float(Time.get_ticks_usec()-serialization_started)/1000.0
+	var sent_us: int=Time.get_ticks_usec()
+	for context in contexts:
+		if inference_profile:
+			context["profile_sent_us"]=sent_us
+			context["profile_serialization_ms"]=serialization_ms/contexts.size()
+			context["profile_request_bytes"]=body.to_utf8_buffer().size()/contexts.size()
+			context.profile_prepare_ms+=serialization_ms/contexts.size()
+			context.profile_parts.serialization_log_ms+=serialization_ms/contexts.size()
+	pending={"batch_contexts":contexts}
+	var error: int=http.request(http.chat_url,["Content-Type: application/json"],HTTPClient.METHOD_POST,body)
+	if error!=OK:
+		diagnostics.write("model_error",{"error":error,"batch":true,"fallback":false})
+		pending.clear()
+
+func request_plan(bot: Dictionary, frame: int, queue_only: bool=false) -> Dictionary:
+	var preparation_started: int=Time.get_ticks_usec()
 	var obs: Dictionary = game._world.strategy_observation(int(bot.index))
-	if not obs.get("ok",false) or not obs.get("model_only_control",false): return
+	if not obs.get("ok",false) or not obs.get("model_only_control",false): return {}
+	var profile_observed: int=Time.get_ticks_usec()
 	var spec: Dictionary = options(obs)
+	var profile_candidates: int=Time.get_ticks_usec()
 	spec.summary["decision_frame"]=frame
 	spec.summary["reward_observations"]=reward_sensor.for_model(game._world,obs)
+	var profile_reward: int=Time.get_ticks_usec()
 	var purchases: Array = game._world.strategy_model_options(int(bot.index))
+	var profile_purchases: int=Time.get_ticks_usec()
 	if game.has_method("model_fixture_reserved_ids"):
 		var reserved: Array = game.model_fixture_reserved_ids()
 		purchases=purchases.filter(func(o): return int(o.get("producer",0)) not in reserved)
@@ -143,23 +192,64 @@ func request_plan(bot: Dictionary, frame: int) -> void:
 	last_request[bot.index]=frame
 	pending={"epoch":epoch,"sequence":sequence,"player":int(bot.index),"observed_frame":frame,"sent_ms":Time.get_ticks_msec(),"options":spec.candidates,"production_options":purchases}
 	var prompt: Array = spec.candidates.map(func(c): return {"id":c.id,"description":c.description,"mechanics":c.mechanics,"rule_refs":c.rule_refs})
-	var payload: Dictionary = {"model":"openbfme-decision-net-v0","messages":[{"role":"user","content":JSON.stringify({"observation":spec.summary,"candidates":prompt,"production_options":purchases})}]}
+	var serialization_started: int=Time.get_ticks_usec()
+	var request_data: Dictionary={"observation":spec.summary,"candidates":prompt,"production_options":purchases}
+	var request_body: String=""
+	if not queue_only:
+		var payload: Dictionary
+		if OS.get_environment("OPENBFME_COMPACT_WIRE")=="1":payload={"model":"openbfme-decision-net-v0","request":request_data}
+		else:payload={"model":"openbfme-decision-net-v0","messages":[{"role":"user","content":JSON.stringify(request_data)}]}
+		request_body=JSON.stringify(payload)
+	var serialization_ms: float=float(Time.get_ticks_usec()-serialization_started)/1000.0
 	diagnostics.write("model_request",{"request":sequence,"player":bot.index,"frame":frame,"observation":spec.summary,"candidates":prompt,"production_options":purchases})
-	var error: int = http.request(http.chat_url,["Content-Type: application/json"],HTTPClient.METHOD_POST,JSON.stringify(payload))
+	if inference_profile:
+		pending["profile_prepare_ms"]=float(Time.get_ticks_usec()-preparation_started)/1000.0
+		pending["profile_parts"]={"snapshot_ms":float(profile_observed-preparation_started)/1000.0,"tactical_options_ms":float(profile_candidates-profile_observed)/1000.0,"reward_sensor_ms":float(profile_reward-profile_candidates)/1000.0,"production_options_ms":float(profile_purchases-profile_reward)/1000.0,"serialization_log_ms":float(Time.get_ticks_usec()-profile_purchases)/1000.0}
+		pending["profile_sent_us"]=Time.get_ticks_usec()
+		pending["profile_serialization_ms"]=serialization_ms
+		pending["profile_request_bytes"]=request_body.to_utf8_buffer().size()
+	if queue_only:return request_data
+	var error: int = http.request(http.chat_url,["Content-Type: application/json"],HTTPClient.METHOD_POST,request_body)
 	if error!=OK:
 		diagnostics.write("model_error",{"request":sequence,"error":error,"fallback":false})
 		pending.clear()
+	return {}
 
 func response(result: int, code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
+	if pending.has("batch_contexts"):
+		var contexts: Array=pending.batch_contexts
+		pending.clear()
+		var outer=JSON.parse_string(body.get_string_from_utf8())
+		if result!=HTTPRequest.RESULT_SUCCESS or code!=200 or not outer is Dictionary or not outer.get("results") is Array or outer.results.size()!=contexts.size():
+			diagnostics.write("model_error",{"http":code,"result":result,"batch":true,"fallback":false})
+			return
+		# Apply in caller order, preserving each bot's original observation/context.
+		for i in contexts.size():
+			pending=contexts[i]
+			response(result,int(outer.results[i].status),_headers,JSON.stringify(outer.results[i].response).to_utf8_buffer())
+		return
+	var callback_started: int=Time.get_ticks_usec()
+	var timing_request: Dictionary=pending.duplicate(false)
+	_apply_profiled_model_response(result,code,_headers,body)
+	if inference_profile and not timing_request.is_empty():
+		diagnostics.write("model_response_timing",{"request":timing_request.sequence,"player":timing_request.player,"observed_frame":timing_request.observed_frame,"callback_ms":float(Time.get_ticks_usec()-callback_started)/1000.0,"response_bytes":body.size()})
+
+func _apply_profiled_model_response(result: int, code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
 	var request: Dictionary = pending.duplicate(true)
 	pending.clear()
 	if request.is_empty() or int(request.epoch)!=epoch or game._state!=game.State.PLAYING or not allowed(): return
+	if inference_profile and request.has("profile_sent_us"):
+		diagnostics.write("model_inference_timing",{"request":request.sequence,"player":request.player,"observed_frame":request.observed_frame,"parts":request.profile_parts,"prepare_ms":request.profile_prepare_ms,"serialization_ms":request.profile_serialization_ms,"request_bytes":request.profile_request_bytes,"rpc_wait_ms":float(Time.get_ticks_usec()-int(request.profile_sent_us))/1000.0,"http":code,"result":result})
 	if result!=HTTPRequest.RESULT_SUCCESS or code!=200:
 		diagnostics.write("model_error",{"request":request.sequence,"http":code,"result":result,"fallback":false})
 		return
 	var outer=JSON.parse_string(body.get_string_from_utf8())
+	if outer is Dictionary and outer.has("results"):
+		var results: Array=outer.results
+		if results.size()!=1 or int(results[0].get("status",0))!=200:return
+		outer=results[0].response
 	if not outer is Dictionary or not outer.get("done",false): return
-	var answer=JSON.parse_string(str(outer.get("message",{}).get("content","")))
+	var answer=outer.get("action") if outer.has("action") else JSON.parse_string(str(outer.get("message",{}).get("content","")))
 	if not answer is Dictionary: return
 	var frame: int = int(game._world.get_frame())
 	if frame-int(request.observed_frame)>75:

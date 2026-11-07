@@ -1,6 +1,6 @@
 {
   "repository": "https://github.com/Open-BFME/openbfme-godot",
-  "base_commit": "1a09e5f4a8d82775cc895657d91a18a7ea6dfddf",
+  "base_commit": "a036524a17ac59969832470a94147e52cfa0d319",
   "license": "GPL-3.0",
   "scope": "AI sources and engine patch; no retail assets or private training data"
 }
